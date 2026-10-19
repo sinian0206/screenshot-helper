@@ -6,3 +6,13 @@ build_*/
 obj/
 bin/
 __pycache__/
+# 测试/验证产物（不纳入版本库）
+tests/real*/
+tests/final/
+tests/ui/
+tests/*.png
+tests/*.txt
+tests/*.jsonl
+tests/mock_requests.jsonl
+tools/*.jsonl
+*.log

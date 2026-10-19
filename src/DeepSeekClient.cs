@@ -366,11 +366,15 @@ namespace XiaoJie
                                 if (chunk == null) continue;
 
                                 AiUsage usage = ParseUsage(chunk);
-                                if (usage != null && onUsage != null) onUsage(usage);
+                                if (usage != null)
+                                {
+                                    usage.ElapsedMs = (int)stopwatch.ElapsedMilliseconds;
+                                    if (onUsage != null) onUsage(usage);
+                                }
 
                                 object choicesObj;
                                 if (!chunk.TryGetValue("choices", out choicesObj)) continue;
-                                object[] choices = choicesObj as object[];
+                                object[] choices = AsArray(choicesObj);
                                 if (choices == null || choices.Length == 0) continue;
                                 Dictionary<string, object> choice = choices[0] as Dictionary<string, object>;
                                 if (choice == null) continue;
@@ -405,7 +409,11 @@ namespace XiaoJie
                         catch (Exception ex) { throw new AiException("服务器响应无法解析：" + Truncate(respText, 300), (int)resp.StatusCode, ex); }
                         if (root == null) throw new AiException("服务器返回空响应。", (int)resp.StatusCode);
                         AiUsage usage = ParseUsage(root);
-                        if (usage != null && onUsage != null) onUsage(usage);
+                        if (usage != null)
+                        {
+                            usage.ElapsedMs = (int)stopwatch.ElapsedMilliseconds;
+                            if (onUsage != null) onUsage(usage);
+                        }
                         string content = ExtractMessageContent(root);
                         stopwatch.Stop();
                         return content ?? "";
@@ -445,6 +453,23 @@ namespace XiaoJie
             return result;
         }
 
+        private static object[] AsArray(object value)
+        {
+            if (value == null) return null;
+            object[] arr = value as object[];
+            if (arr != null) return arr;
+            System.Collections.ArrayList list = value as System.Collections.ArrayList;
+            if (list != null) return list.ToArray();
+            System.Collections.IEnumerable enumerable = value as System.Collections.IEnumerable;
+            if (enumerable != null)
+            {
+                System.Collections.Generic.List<object> items = new System.Collections.Generic.List<object>();
+                foreach (object item in enumerable) items.Add(item);
+                return items.ToArray();
+            }
+            return null;
+        }
+
         private static int GetInt(Dictionary<string, object> dict, string key)
         {
             object v;
@@ -463,7 +488,7 @@ namespace XiaoJie
         {
             object choicesObj;
             if (!root.TryGetValue("choices", out choicesObj)) return null;
-            object[] choices = choicesObj as object[];
+            object[] choices = AsArray(choicesObj);
             if (choices == null || choices.Length == 0) return null;
             Dictionary<string, object> choice = choices[0] as Dictionary<string, object>;
             if (choice == null) return null;
@@ -600,7 +625,7 @@ namespace XiaoJie
             List<PrivacyRegion> regions = new List<PrivacyRegion>();
             object listObj;
             if (root == null || !root.TryGetValue("regions", out listObj) || listObj == null) return regions;
-            object[] arr = listObj as object[];
+            object[] arr = AsArray(listObj);
             if (arr == null) return regions;
             foreach (object item in arr)
             {

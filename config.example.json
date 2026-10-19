@@ -1,0 +1,23 @@
+{
+  "Version": 1,
+  "ApiKeyEnc": "",
+  "BaseUrl": "https://api.deepseek.com",
+  "VisionModel": "deepseek-flash",
+  "TextModel": "deepseek-flash",
+  "TimeoutSec": 120,
+  "Hotkey": "Alt+A",
+  "SaveDir": "",
+  "SaveFormat": "png",
+  "TranslateTarget": "中文",
+  "AutoCopy": true,
+  "AutoSave": false,
+  "ShowColorValue": true,
+  "ShowDimensions": true,
+  "PinAlwaysOnTop": true,
+  "MosaicBlock": 12.0,
+  "ShowUsage": true,
+  "OcrExtraPrompt": "",
+  "TranslateExtraPrompt": "",
+  "StartWithWindows": false,
+  "FirstRunDone": false
+}

@@ -104,6 +104,17 @@ namespace XiaoJie
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
+                Application.ThreadException += delegate (object sender, System.Threading.ThreadExceptionEventArgs e)
+                {
+                    Log.Write("UI 线程未处理异常: " + e.Exception);
+                    try { Toast.Show("发生错误：" + e.Exception.Message, 4000); } catch { }
+                    try { MessageBox.Show("发生错误：" + e.Exception.Message + "\r\n\r\n详细信息已写入日志：\r\n" + Log.PathHint, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                };
+                AppDomain.CurrentDomain.UnhandledException += delegate (object sender, UnhandledExceptionEventArgs e)
+                {
+                    Exception ex = e.ExceptionObject as Exception;
+                    Log.Write("未处理异常: " + (ex != null ? ex.ToString() : "unknown"));
+                };
                 ConfigStore store = new ConfigStore();
                 Log.Init(store.LogPath);
                 Log.Write("===== 启动 " + AppInfo.Version + "，配置: " + store.ConfigPath + " =====");
@@ -131,3 +142,4 @@ namespace XiaoJie
         }
     }
 }
+

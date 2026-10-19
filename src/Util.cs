@@ -91,6 +91,7 @@ namespace XiaoJie
         public const int WM_HOTKEY = 0x0312;
         public const uint MONITOR_DEFAULTTONEAREST = 2;
         public const uint GA_ROOT = 2;
+        public const uint GW_HWNDNEXT = 2;
 
         public const int GWL_EXSTYLE = -20;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -118,6 +119,9 @@ namespace XiaoJie
 
         [DllImport("user32.dll")]
         public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
         [DllImport("user32.dll")]
         public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -695,6 +699,11 @@ namespace XiaoJie
             _path = path;
         }
 
+        public static string PathHint
+        {
+            get { return string.IsNullOrEmpty(_path) ? "(日志路径未初始化)" : _path; }
+        }
+
         public static void Write(string message)
         {
             try
@@ -740,6 +749,22 @@ namespace XiaoJie
             {
                 try { ShowCore(text, durationMs); } catch (Exception ex) { Log.Write("Toast 失败: " + ex.Message); }
             }, null);
+        }
+
+        /// <summary>立即关闭当前提示（截图前调用，避免提示入镜）。</summary>
+        public static void HideCurrent()
+        {
+            SynchronizationContext ctx = _ctx;
+            Action action = delegate
+            {
+                if (_current != null)
+                {
+                    try { _current.Close(); } catch { }
+                    _current = null;
+                }
+            };
+            if (ctx != null) ctx.Post(delegate { action(); }, null);
+            else action();
         }
 
         private static void ShowCore(string text, int durationMs)
@@ -907,45 +932,69 @@ namespace XiaoJie
             return false;
         }
 
-        /// <summary>获取屏幕坐标处顶层窗口的矩形（用于截图时智能识别窗口）。</summary>
-        public static bool TryGetWindowRectAt(Point screenPoint, out Rectangle bounds, out string title)
+        /// <summary>
+        /// 获取屏幕坐标下、位于最上层的「目标窗口」矩形（用于截图时智能识别窗口）。
+        /// 会跳过 ignoreHwnd（截图覆盖层自身）以及本源进程的所有窗口。
+        /// </summary>
+        public static bool TryGetTopWindowAt(Point screenPoint, IntPtr ignoreHwnd, out Rectangle bounds, out string title)
         {
             bounds = Rectangle.Empty;
             title = "";
             try
             {
+                uint myPid = (uint)Process.GetCurrentProcess().Id;
                 Native.POINT pt = new Native.POINT(screenPoint.X, screenPoint.Y);
-                IntPtr hwnd = Native.WindowFromPoint(pt);
-                if (hwnd == IntPtr.Zero) return false;
-                hwnd = Native.GetAncestor(hwnd, Native.GA_ROOT);
-                if (hwnd == IntPtr.Zero || !Native.IsWindowVisible(hwnd)) return false;
-                Native.RECT rc;
-                if (!Native.GetWindowRect(hwnd, out rc)) return false;
-                Rectangle rect = rc.ToRectangle();
-                if (rect.Width < 40 || rect.Height < 30) return false;
-                // 排除桌面/任务栏/我们自己的窗口
-                StringBuilder cls = new StringBuilder(256);
-                Native.GetClassName(hwnd, cls, cls.Capacity);
-                string className = cls.ToString();
-                // 桌面 / 任务栏 / 开始菜单等系统窗口不参与智能识别
-                if (className == "Progman" || className == "WorkerW" || className == "Shell_TrayWnd" ||
-                    className == "Windows.UI.Core.CoreWindow" || className == "Shell_SecondaryTrayWnd" ||
-                    className == "NotifyIconOverflowWindow")
-                    return false;
-                int exStyle = Native.GetWindowLong(hwnd, Native.GWL_EXSTYLE);
-                if ((exStyle & Native.WS_EX_TOOLWINDOW) != 0) return false;
-                Rectangle vs = DpiUtil.VirtualScreen;
-                rect.Intersect(vs);
-                if (rect.Width < 40 || rect.Height < 30) return false;
-                StringBuilder sb = new StringBuilder(Native.GetWindowTextLength(hwnd) + 2);
-                Native.GetWindowText(hwnd, sb, sb.Capacity);
-                title = sb.ToString();
-                bounds = rect;
-                return true;
+                IntPtr h = Native.WindowFromPoint(pt);
+                int guard = 0;
+                while (h != IntPtr.Zero && guard++ < 200)
+                {
+                    IntPtr root = Native.GetAncestor(h, Native.GA_ROOT);
+                    if (root == IntPtr.Zero) root = h;
+                    if (root != ignoreHwnd && Native.IsWindowVisible(root))
+                    {
+                        uint pid;
+                        Native.GetWindowThreadProcessId(root, out pid);
+                        if (pid != myPid)
+                        {
+                            Native.RECT rc;
+                            if (Native.GetWindowRect(root, out rc))
+                            {
+                                Rectangle rect = rc.ToRectangle();
+                                if (rect.Width >= 40 && rect.Height >= 30 && rect.Contains(screenPoint))
+                                {
+                                    StringBuilder cls = new StringBuilder(256);
+                                    Native.GetClassName(root, cls, cls.Capacity);
+                                    string className = cls.ToString();
+                                    if (className != "Progman" && className != "WorkerW" &&
+                                        className != "Shell_TrayWnd" && className != "Shell_SecondaryTrayWnd" &&
+                                        className != "Windows.UI.Core.CoreWindow" && className != "NotifyIconOverflowWindow" &&
+                                        className != "SysShadow")
+                                    {
+                                        int exStyle = Native.GetWindowLong(root, Native.GWL_EXSTYLE);
+                                        if ((exStyle & Native.WS_EX_TOOLWINDOW) == 0)
+                                        {
+                                            Rectangle vs = DpiUtil.VirtualScreen;
+                                            rect.Intersect(vs);
+                                            if (rect.Width >= 40 && rect.Height >= 30)
+                                            {
+                                                StringBuilder sb = new StringBuilder(Native.GetWindowTextLength(root) + 2);
+                                                Native.GetWindowText(root, sb, sb.Capacity);
+                                                title = sb.ToString();
+                                                bounds = rect;
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    h = Native.GetWindow(h, Native.GW_HWNDNEXT);
+                }
+                return false;
             }
             catch { return false; }
         }
     }
 }
-
 

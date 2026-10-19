@@ -1,0 +1,19 @@
+表情贴纸资源许可说明
+====================
+
+本目录下的表情贴纸 PNG（assets/emoji/*.png）来自 Twemoji 项目：
+
+  项目主页：https://github.com/twitter/twemoji
+  资源版本：Twemoji 14.0.2（72x72 PNG，文件名使用 Unicode 码点，如 1f600.png）
+  下载地址：https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/<码点>.png
+
+图形版权：Copyright 2020 Twitter, Inc and other contributors
+许可协议：Creative Commons Attribution 4.0 International (CC-BY 4.0)
+  许可全文：https://creativecommons.org/licenses/by/4.0/
+
+本项目（微信截图助手 / DeepSeek 版）仅将这些图形作为截图编辑中的“表情贴纸”示例素材使用，
+未对图形本身进行修改（仅按原样嵌入 exe 资源）。如需再分发，请保留本说明与 CC-BY 4.0 署名。
+
+本工程中表情资源由构建脚本/工具一次性下载（见 tools/fetch_emoji.py），构建时由
+src/微信截图助手.csproj 以 LogicalName="emoji.<文件名>.png" 嵌入程序集。
+运行时通过 Assembly.GetManifestResourceStream("emoji.1f600.png") 之类的名字读取。
