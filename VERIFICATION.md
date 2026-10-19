@@ -4,7 +4,9 @@
 - 构建方式：`pwsh -File build.ps1`（.NET Framework 4.8，`dotnet build`，单文件绿色 exe）
 - 验证时间：2026-10-19
 - 验证环境：Windows 11 家庭中文版（10.0.26200）、2560×1440 @100%、单显示器；桌面 UI 自动化使用 PowerShell + Win32 SendInput/PostMessage
-- 最新 exe：`build_lead\微信截图助手.exe`，286,208 字节（279.5 KB），SHA256 `8553583A7613A3C95943B8AF17F3650E39B86982DE639F27DB23F9ADECD742D6`
+- 最新 exe：`dist\微信截图助手.exe`，286,208 字节（279.5 KB），SHA256 `8553583A7613A3C95943B8AF17F3650E39B86982DE639F27DB23F9ADECD742D6`
+- 绿色版压缩包：`dist\微信截图助手_v1.0.0_绿色版.zip`，183,185 字节，SHA256 `776497C15BDB6E0A2714A84287316BE1D98E28AEFDCC78026A79790105BE38B5`
+- zip 内容（4/4 解压 SHA256 一致）：微信截图助手.exe + 使用说明.txt + 功能清单.txt + config.example.json
 
 ## 1. 自动化测试结果
 
