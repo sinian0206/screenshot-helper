@@ -372,7 +372,7 @@ namespace XiaoJie
             req.Method = "POST";
             req.ContentType = "application/json; charset=utf-8";
             req.Accept = stream ? "text/event-stream" : "application/json";
-            req.UserAgent = AppInfo.Name + "/" + AppInfo.Version;
+            req.UserAgent = "ScreenshotHelper/" + AppInfo.Version;
             try { req.Headers["Accept-Language"] = "zh-CN,zh;q=0.9,en;q=0.6"; } catch { }
             req.KeepAlive = true;
             req.Timeout = Math.Max(10, _cfg.TimeoutSec) * 1000;

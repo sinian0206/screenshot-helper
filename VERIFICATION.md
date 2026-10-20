@@ -6,9 +6,9 @@
 
 | 文件 | 大小 | SHA256 |
 | --- | ---: | --- |
-| `截图助手.exe` | 492,544 B | `D0CD27F2C89AB970DD284F0FD4C76DE0C21DD1BAF28496493FBA8A53AB9946C5` |
-| `RecorderNative.dll` | 320,512 B | `3B6FD597304A44F619FCB2EF173B18A5E276D75A0C513865EC1AE42093FA67F6` |
-| `截图助手_v1.2.3_绿色版.zip` | 20.86 MiB | `36F985246D7CE5A998CB85CDD41248D34FCB2FC263F34E55B730C5A110893E6A` |
+| `截图助手.exe` | 492,544 B | `7AFFECA7C7711F5FB3D4892A87444909540948DFEEDDBB96EF2D93172CA3F0AC` |
+| `RecorderNative.dll` | 320,512 B | `8C022900051C1F27837F843771A0EBA3DDCE3E5CE39A9CC038001D2789A8E61F` |
+| `截图助手_v1.2.3_绿色版.zip` | 20.86 MiB | `3360EA1A6629A300CE33C09F4073E8EA3A6D4A11B17177022C4F84C52D63762C` |
 
 压缩包包含主程序、录制桥接 DLL、OCR 运行时、许可证、三份说明书和配置示例。压缩包与发布目录不包含用户 `config.json`、历史记录或实际凭据。
 
@@ -18,13 +18,13 @@
 
 ```powershell
 pwsh -NoProfile -File tests/run-all.ps1 `
-  -RunName v1_2_3_final3 `
+  -RunName v1_2_3_final4 `
   -ContinueOnFailure
 ```
 
 结果：24 个阶段全部退出码 0。汇总文件：
 
-`build_acceptance/v1_2_3_final3/logs/summary.json`
+`build_acceptance/v1_2_3_final4/logs/summary.json`
 
 | 阶段 | 结果 |
 | --- | --- |
@@ -68,8 +68,8 @@ pwsh -NoProfile -File tests/run-all.ps1 `
 
 证据目录：
 
-- `build_acceptance/v1_2_3_final3/logs`
-- `build_acceptance/package_v1_2_3_final3`
+- `build_acceptance/v1_2_3_final4/logs`
+- `build_acceptance/package_v1_2_3_final4`
 - `build_ui/showcase/cdp-report.json`
 - `build_ui/controls/report.txt`
 - `build_ui/seven-features/report.txt`
