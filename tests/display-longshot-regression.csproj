@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>display-longshot-regression</AssemblyName>
+    <ApplicationManifest>..\assets\app.manifest</ApplicationManifest>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Security" />
+    <Compile Include="display-longshot-regression.cs" />
+    <Compile Include="..\src\Util.cs" Link="Util.cs" />
+    <Compile Include="..\src\LongShot.cs" Link="LongShot.cs" />
+    <Compile Include="..\src\LongShotStitcher.cs" Link="LongShotStitcher.cs" />
+    <Compile Include="..\src\PinForm.cs" Link="PinForm.cs" />
+    <Compile Include="..\src\AppConfig.cs" Link="AppConfig.cs" />
+  </ItemGroup>
+</Project>

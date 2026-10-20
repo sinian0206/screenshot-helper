@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+    <AssemblyName>截图助手</AssemblyName>
+    <RootNamespace>XiaoJie</RootNamespace>
+    <ApplicationIcon>..\assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>..\assets\app.manifest</ApplicationManifest>
+    <Product>截图助手</Product>
+    <AssemblyTitle>截图助手</AssemblyTitle>
+    <Description>截图助手：截图标注、本地文字识别、原位翻译、智能打码与屏幕录制，绿色免安装</Description>
+    <Company>XiaoJie</Company>
+    <Copyright>Copyright © 2026 XiaoJie</Copyright>
+    <Version>1.2.3</Version>
+    <FileVersion>1.2.3.0</FileVersion>
+    <AssemblyVersion>1.2.3.0</AssemblyVersion>
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <Deterministic>true</Deterministic>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+    <NoWarn>$(NoWarn);CS0168;CS0219;CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\assets\emoji\*.png" LogicalName="emoji.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <Target Name="CopyRecorderComponent" AfterTargets="Build">
+    <Copy SourceFiles="..\build_native\$(Configuration)\RecorderNative.dll" DestinationFolder="$(TargetDir)"
+          Condition="Exists('..\build_native\$(Configuration)\RecorderNative.dll')" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

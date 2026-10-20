@@ -1,0 +1,14 @@
+{
+  "engine": "RapidOCR-json v0.2.0",
+  "model": "PP-OCRv4 Chinese/English",
+  "source": "https://github.com/hiroi-sora/RapidOCR-json/releases/tag/v0.2.0",
+  "archive_url": "https://github.com/hiroi-sora/RapidOCR-json/releases/download/v0.2.0/RapidOCR-json_v0.2.0.7z",
+  "archive_sha256": "7AD9B283D03436C6CD0296723188699299CB4E5CF9140B410C59543AA5793C40",
+  "files": [
+    { "path": "RapidOCR-json.exe", "sha256": "616BD43A4672EE9FCF4D1CA607D7D9EC413B45D489482064D97E00A7EFA9D76E" },
+    { "path": "models/ch_PP-OCRv4_det_infer.onnx", "sha256": "D2A7720D45A54257208B1E13E36A8479894CB74155A5EFE29462512D42F49DA9" },
+    { "path": "models/rec_ch_PP-OCRv4_infer.onnx", "sha256": "48FC40F24F6D2A207A2B1091D3437EB3CC3EB6B676DC3EF9C37384005483683B" },
+    { "path": "models/ch_ppocr_mobile_v2.0_cls_infer.onnx", "sha256": "E47ACEDF663230F8863FF1AB0E64DD2D82B838FCEB5957146DAB185A89D6215C" },
+    { "path": "models/dict_chinese.txt", "sha256": "28B2362AD4AB2DC38769AA72FEB535E3A9DDB3FD2A7585A05920E6393B1DC7F7" }
+  ]
+}

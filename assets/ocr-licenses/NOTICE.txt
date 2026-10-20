@@ -1,0 +1,22 @@
+本目录随本地 OCR 便携组件一起分发。
+
+RapidOCR-json v0.2.0
+Source: https://github.com/hiroi-sora/RapidOCR-json
+Release: https://github.com/hiroi-sora/RapidOCR-json/releases/tag/v0.2.0
+License: MIT; see RapidOCR-json-MIT.txt
+
+RapidOcrOnnx and PP-OCR/PaddleOCR models
+Sources: https://github.com/RapidAI/RapidOcrOnnx
+         https://github.com/PaddlePaddle/PaddleOCR
+License: Apache-2.0; see RapidOcrOnnx-Apache-2.0.txt and PaddleOCR-Apache-2.0.txt
+
+The upstream executable statically includes third-party libraries:
+ONNX Runtime: https://github.com/microsoft/onnxruntime (MIT)
+OpenCV: https://github.com/opencv/opencv (Apache-2.0)
+JSON for Modern C++: https://github.com/nlohmann/json (MIT)
+See the corresponding license files in this directory.
+
+The official release is reused without modifying its executable or models.
+Only the simplified Chinese/English PP-OCRv4 detection/recognition models,
+direction classifier, and dictionary are selected from the larger release.
+The retained files and SHA256 values are recorded in manifest.json.
