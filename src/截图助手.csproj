@@ -8,18 +8,19 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <AssemblyName>微信截图助手</AssemblyName>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+    <AssemblyName>截图助手</AssemblyName>
     <RootNamespace>XiaoJie</RootNamespace>
     <ApplicationIcon>..\assets\app.ico</ApplicationIcon>
     <ApplicationManifest>..\assets\app.manifest</ApplicationManifest>
-    <Product>微信截图助手（DeepSeek 版）</Product>
-    <AssemblyTitle>微信截图助手（DeepSeek 版）</AssemblyTitle>
-    <Description>微信风格截图 + DeepSeek 文字提取 / 翻译 / 智能打码，绿色免安装</Description>
+    <Product>截图助手</Product>
+    <AssemblyTitle>截图助手</AssemblyTitle>
+    <Description>截图助手：截图标注、本地文字识别、原位翻译、智能打码与屏幕录制，绿色免安装</Description>
     <Company>XiaoJie</Company>
     <Copyright>Copyright © 2026 XiaoJie</Copyright>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.2.4</Version>
+    <FileVersion>1.2.4.0</FileVersion>
+    <AssemblyVersion>1.2.4.0</AssemblyVersion>
     <DebugType>none</DebugType>
     <Optimize>true</Optimize>
     <Deterministic>true</Deterministic>
@@ -40,5 +41,10 @@
   <ItemGroup>
     <EmbeddedResource Include="..\assets\emoji\*.png" LogicalName="emoji.%(Filename)%(Extension)" />
   </ItemGroup>
+
+  <Target Name="CopyRecorderComponent" AfterTargets="Build">
+    <Copy SourceFiles="..\build_native\$(Configuration)\RecorderNative.dll" DestinationFolder="$(TargetDir)"
+          Condition="Exists('..\build_native\$(Configuration)\RecorderNative.dll')" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

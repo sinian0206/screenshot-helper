@@ -16,7 +16,9 @@ namespace XiaoJie
         Pen,
         Mosaic,
         Text,
-        Number
+        TextSelect,
+        Number,
+        Select = 10
     }
 
     public enum ToolbarAction
@@ -28,15 +30,12 @@ namespace XiaoJie
         Undo,
         Save,
         Pin,
-        Forward,
         Close,
-        Confirm
+        Confirm,
+        Redo
     }
 
-    /// <summary>
-    /// 微信风格截图工具栏：白色圆角条 + GDI+ 矢量图标。
-    /// 10 个工具/AI 按钮 + 分隔线 + 撤销/保存/钉桌面/转发/关闭/完成。
-    /// </summary>
+    /// <summary>截图编辑器工具栏，使用独立分组和 GDI+ 矢量图标。</summary>
     public sealed class EditorToolbar : Control
     {
         private sealed class Item
@@ -57,6 +56,7 @@ namespace XiaoJie
         private EditorTool _activeTool = EditorTool.None;
         private bool _canUndo;
         private bool _canRedo;
+        private int _maximumLayoutWidth = int.MaxValue;
 
         public event EventHandler ToolClicked;
         public event EventHandler ActionClicked;
@@ -66,8 +66,9 @@ namespace XiaoJie
         {
             _scale = scale <= 0f ? 1f : scale;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
-                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            BackColor = Color.White;
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = UiTheme.ConsoleBase;
             _tip.InitialDelay = 350;
             _tip.ReshowDelay = 120;
             _tip.ShowAlways = true;
@@ -95,7 +96,13 @@ namespace XiaoJie
         public bool CanRedo
         {
             get { return _canRedo; }
-            set { if (_canRedo != value) { _canRedo = value; } }
+            set { if (_canRedo != value) { _canRedo = value; Invalidate(); } }
+        }
+
+        internal int MaximumLayoutWidth
+        {
+            get { return _maximumLayoutWidth; }
+            set { _maximumLayoutWidth = Math.Max(100, value); RefreshLayout(); }
         }
 
         public float UiScale { get { return _scale; } }
@@ -109,15 +116,18 @@ namespace XiaoJie
             AddTool(EditorTool.Pen, "画笔  (P)");
             AddTool(EditorTool.Mosaic, "马赛克  (M)");
             AddTool(EditorTool.Text, "文字  (T)");
+            AddTool(EditorTool.TextSelect, "选择文字  (C) · 框选后复制");
             AddTool(EditorTool.Number, "序号  (N)");
+            AddTool(EditorTool.Select, "选择对象  (V) · 拖动/缩放 · Delete 删除");
+            _items.Add(new Item { IsSeparator = true });
             AddAction(ToolbarAction.Translate, "文字翻译  (点击后 AI 翻译)");
-            AddAction(ToolbarAction.Ocr, "文字提取  (点击后 AI OCR)");
+            AddAction(ToolbarAction.Ocr, "文字提取  (本地 OCR)");
             AddAction(ToolbarAction.LongShot, "长截图  (滚动截取)");
             _items.Add(new Item { IsSeparator = true });
             AddAction(ToolbarAction.Undo, "撤销  (Ctrl+Z)");
+            AddAction(ToolbarAction.Redo, "重做  (Ctrl+Y)");
             AddAction(ToolbarAction.Save, "保存  (Ctrl+S)");
             AddAction(ToolbarAction.Pin, "钉在桌面");
-            AddAction(ToolbarAction.Forward, "转发到微信  (复制并激活微信)");
             AddAction(ToolbarAction.Close, "关闭  (Esc)");
             AddAction(ToolbarAction.Confirm, "完成  (Enter / Ctrl+C)");
         }
@@ -145,32 +155,57 @@ namespace XiaoJie
             return Rectangle.Empty;
         }
 
+        internal Rectangle ActionBounds(ToolbarAction action)
+        {
+            Item item = _items.Find(candidate => !candidate.IsTool && !candidate.IsSeparator && candidate.Action == action);
+            return item == null ? Rectangle.Empty : item.Bounds;
+        }
+
+        internal Rectangle ToolBounds(EditorTool tool)
+        {
+            Item item = _items.Find(candidate => candidate.IsTool && candidate.Tool == tool);
+            return item == null ? Rectangle.Empty : item.Bounds;
+        }
+
         public void RefreshLayout()
         {
             int btn = (int)Math.Round(40 * _scale);
-            int padX = (int)Math.Round(10 * _scale);
-            int padY = (int)Math.Round(5 * _scale);
-            int gap = (int)Math.Round(2 * _scale);
-            int sepGap = (int)Math.Round(9 * _scale);
+            int padX = (int)Math.Round(8 * _scale);
+            int padY = (int)Math.Round(7 * _scale);
+            int gap = (int)Math.Round(3 * _scale);
+            int sepGap = (int)Math.Round(7 * _scale);
             int x = padX;
+            int y = padY;
+            int widest = 0;
             foreach (Item item in _items)
             {
                 if (item.IsSeparator)
                 {
+                    if (x + sepGap * 2 + btn > _maximumLayoutWidth - padX)
+                    {
+                        item.Bounds = Rectangle.Empty;
+                        continue;
+                    }
                     x += sepGap;
-                    item.Bounds = new Rectangle(x, (int)Math.Round(11 * _scale), Math.Max(1, (int)Math.Round(_scale)), (int)Math.Round(22 * _scale));
+                    item.Bounds = new Rectangle(x, y + (int)Math.Round(6 * _scale), Math.Max(1, (int)Math.Round(_scale)), (int)Math.Round(22 * _scale));
                     x += item.Bounds.Width + sepGap;
                 }
                 else
                 {
-                    item.Bounds = new Rectangle(x, padY, btn, btn);
+                    if (x > padX && x + btn > _maximumLayoutWidth - padX)
+                    {
+                        widest = Math.Max(widest, x - gap + padX);
+                        x = padX;
+                        y += btn + gap;
+                    }
+                    item.Bounds = new Rectangle(x, y, btn, btn);
                     x += btn + gap;
                 }
             }
-            int width = x - gap + padX;
-            int height = btn + padY * 2;
+            int width = Math.Max(widest, x - gap + padX);
+            int height = y + btn + padY;
             if (width != Width || height != Height) Size = new Size(width, height);
-            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(0, 0, Width, Height), 9 * _scale))
+            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(0, 0, Width, Height), 16 * _scale))
             {
                 if (Region != null) Region.Dispose();
                 Region = new Region(path);
@@ -249,6 +284,7 @@ namespace XiaoJie
                 return;
             }
             if (item.Action == ToolbarAction.Undo && !_canUndo) return;
+            if (item.Action == ToolbarAction.Redo && !_canRedo) return;
             EventHandler ah = ActionClicked;
             if (ah != null)
             {
@@ -271,48 +307,76 @@ namespace XiaoJie
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            // 浅色浮层：使用细描边、圆角和低强度阴影，保持工具按钮清晰可辨。
             RectangleF rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
-            using (GraphicsPath path = ImageUtil.RoundedRect(rect, 9 * _scale))
+            using (GraphicsPath path = ImageUtil.RoundedRect(rect, 16 * _scale))
             {
-                using (SolidBrush b = new SolidBrush(Color.White)) g.FillPath(b, path);
-                using (Pen p = new Pen(Color.FromArgb(226, 226, 226), Math.Max(1f, 1f * _scale))) g.DrawPath(p, path);
+                using (SolidBrush b = new SolidBrush(UiTheme.ToolbarBg)) g.FillPath(b, path);
+                using (Pen p = new Pen(UiTheme.ToolbarBorder, Math.Max(1f, 1f * _scale))) g.DrawPath(p, path);
             }
             for (int i = 0; i < _items.Count; i++)
             {
                 Item item = _items[i];
                 if (item.IsSeparator)
                 {
-                    using (Pen p = new Pen(Color.FromArgb(228, 228, 228), Math.Max(1f, _scale)))
+                    using (Pen p = new Pen(UiTheme.ConsoleBorder, Math.Max(1f, _scale)))
                         g.DrawLine(p, item.Bounds.Left, item.Bounds.Top, item.Bounds.Left, item.Bounds.Bottom);
                     continue;
                 }
                 bool hover = i == _hoverIndex;
                 bool active = item.IsTool && _activeTool == item.Tool;
-                bool disabled = item.Action == ToolbarAction.Undo && !_canUndo;
-                RectangleF bg = new RectangleF(item.Bounds.X + 1, item.Bounds.Y + 1, item.Bounds.Width - 2, item.Bounds.Height - 2);
-                if (active)
+                bool disabled = (item.Action == ToolbarAction.Undo && !_canUndo) || (item.Action == ToolbarAction.Redo && !_canRedo);
+                RectangleF bg = new RectangleF(item.Bounds.X + 1, item.Bounds.Y + 2, item.Bounds.Width - 2, item.Bounds.Height - 4);
+
+                Color iconColor;
+
+                // 2. 按钮视觉分层渲染
+                if (item.Action == ToolbarAction.Confirm)
                 {
-                    using (SolidBrush b = new SolidBrush(UiTheme.GreenLight))
-                    using (GraphicsPath path = ImageUtil.RoundedRect(bg, 7 * _scale))
+                    // 主操作使用高对比橙色信号块，深色图标避免白橙对比不足。
+                    Color confirmBg = hover ? UiTheme.ConfirmBgHover : UiTheme.ConfirmBg;
+                    using (SolidBrush b = new SolidBrush(confirmBg))
+                    using (GraphicsPath path = ImageUtil.RoundedRect(bg, 11 * _scale))
                         g.FillPath(b, path);
+                    iconColor = Color.White;
+                }
+                else if (item.Action == ToolbarAction.Close && hover)
+                {
+                    using (SolidBrush b = new SolidBrush(UiTheme.CloseHoverBg))
+                    using (GraphicsPath path = ImageUtil.RoundedRect(bg, 10 * _scale))
+                        g.FillPath(b, path);
+                    iconColor = UiTheme.CloseHoverText;
+                }
+                else if (active)
+                {
+                    // 选中工具使用淡蓝底和系统蓝图标。
+                    using (SolidBrush b = new SolidBrush(UiTheme.ActiveBg))
+                    using (GraphicsPath path = ImageUtil.RoundedRect(bg, 10 * _scale))
+                    {
+                        g.FillPath(b, path);
+                    }
+                    iconColor = UiTheme.Telemetry;
                 }
                 else if (hover && !disabled)
                 {
                     using (SolidBrush b = new SolidBrush(UiTheme.HoverBg))
-                    using (GraphicsPath path = ImageUtil.RoundedRect(bg, 7 * _scale))
+                    using (GraphicsPath path = ImageUtil.RoundedRect(bg, 10 * _scale))
                         g.FillPath(b, path);
+                    iconColor = UiTheme.ConsoleText;
                 }
-                Color color;
-                if (disabled) color = UiTheme.Disabled;
-                else if (item.Action == ToolbarAction.Close) color = UiTheme.Red;
-                else if (item.Action == ToolbarAction.Confirm) color = UiTheme.Green;
-                else if (active) color = UiTheme.GreenDark;
-                else color = UiTheme.IconColor;
+                else
+                {
+                    if (disabled) iconColor = UiTheme.ConsoleMuted;
+                    else if (item.Action == ToolbarAction.Close) iconColor = UiTheme.Critical;
+                    else iconColor = UiTheme.ConsoleText;
+                }
+
                 RectangleF iconBox = new RectangleF(
                     item.Bounds.X + (item.Bounds.Width - 22 * _scale) / 2f,
                     item.Bounds.Y + (item.Bounds.Height - 22 * _scale) / 2f,
                     22 * _scale, 22 * _scale);
-                IconPainter.Draw(g, item.Action, item.Tool, iconBox, color, _scale);
+                IconPainter.Draw(g, item.Action, item.Tool, iconBox, iconColor, _scale);
             }
         }
 
@@ -346,14 +410,17 @@ namespace XiaoJie
                         case ToolbarAction.Ocr: DrawOcr(g, pen, P, s); return;
                         case ToolbarAction.LongShot: DrawLongShot(g, pen, P, s); return;
                         case ToolbarAction.Undo: DrawUndo(g, pen, P, s); return;
+                        case ToolbarAction.Redo: DrawUndo(g, pen, (x, y) => P(20 - x, y), s); return;
                         case ToolbarAction.Save: DrawSave(g, pen, P, s); return;
                         case ToolbarAction.Pin: DrawPin(g, pen, brush, P, s); return;
-                        case ToolbarAction.Forward: DrawForward(g, pen, P, s); return;
                         case ToolbarAction.Close: DrawClose(g, pen, P, s); return;
                         case ToolbarAction.Confirm: DrawConfirm(g, pen, P, s); return;
                     }
                     switch (tool)
                     {
+                        case EditorTool.Select:
+                            g.DrawPolygon(pen, new[] { P(5, 3), P(5, 16), P(9, 12), P(13, 17), P(15, 16), P(11, 11), P(16, 10) });
+                            return;
                         case EditorTool.Rectangle:
                             g.DrawRectangle(pen, X(3), Y(5), 14 * s, 10 * s);
                             return;
@@ -380,6 +447,12 @@ namespace XiaoJie
                         case EditorTool.Text:
                             g.DrawLine(pen, P(4.0f, 6.0f), P(16.0f, 6.0f));
                             g.DrawLine(pen, P(10.0f, 6.0f), P(10.0f, 16.0f));
+                            return;
+                        case EditorTool.TextSelect:
+                            g.DrawRectangle(pen, X(3), Y(4), 14 * s, 12 * s);
+                            g.DrawLine(pen, P(6, 8), P(14, 8));
+                            g.DrawLine(pen, P(6, 11), P(13, 11));
+                            g.DrawLine(pen, P(6, 14), P(11, 14));
                             return;
                         case EditorTool.Number:
                             g.DrawEllipse(pen, X(3.0f), Y(3.0f), 14 * s, 14 * s);
@@ -483,17 +556,6 @@ namespace XiaoJie
             g.FillEllipse(brush, P(13.4f, 13.2f).X, P(13.4f, 13.2f).Y, 2.0f * s, 2.0f * s);
         }
 
-        private static void DrawForward(Graphics g, Pen pen, Func<float, float, PointF> P, float s)
-        {
-            using (GraphicsPath path = new GraphicsPath())
-            {
-                path.AddBezier(P(4.2f, 14.6f), P(5.6f, 7.6f), P(11.6f, 4.8f), P(15.6f, 7.6f));
-                g.DrawPath(pen, path);
-            }
-            g.DrawLine(pen, P(15.8f, 7.6f), P(11.6f, 7.0f));
-            g.DrawLine(pen, P(15.8f, 7.6f), P(14.2f, 11.4f));
-        }
-
         private static void DrawClose(Graphics g, Pen pen, Func<float, float, PointF> P, float s)
         {
             g.DrawLine(pen, P(5.6f, 5.6f), P(14.4f, 14.4f));
@@ -502,7 +564,10 @@ namespace XiaoJie
 
         private static void DrawConfirm(Graphics g, Pen pen, Func<float, float, PointF> P, float s)
         {
-            g.DrawLines(pen, new PointF[] { P(4.4f, 10.6f), P(8.4f, 14.6f), P(15.6f, 5.4f) });
+            float oldW = pen.Width;
+            pen.Width = Math.Max(2.0f, 2.2f * s);
+            g.DrawLines(pen, new PointF[] { P(4.8f, 10.4f), P(8.6f, 14.4f), P(15.4f, 5.6f) });
+            pen.Width = oldW;
         }
 
         private static void DrawPen(Graphics g, Pen pen, Func<float, float, PointF> P, float s)

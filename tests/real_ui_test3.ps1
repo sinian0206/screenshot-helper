@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 . (Join-Path $root 'tools\ui_probe.ps1')
-if (-not $Exe) { $Exe = Join-Path $root 'build_lead\微信截图助手.exe' }
+if (-not $Exe) { $Exe = Join-Path $root 'build_lead\截图助手.exe' }
 if (-not (Test-Path $Exe)) { throw "找不到 exe: $Exe" }
 $out = Join-Path $root $OutDir
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -28,7 +28,7 @@ $cfg = @{
 Set-Content -Encoding UTF8 (Join-Path $exeDir 'config.json') $cfg
 New-Item -ItemType Directory -Force (Join-Path $out 'shots') | Out-Null
 
-Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
 $mockLog = Join-Path $out 'mock_requests.jsonl'
 Remove-Item $mockLog -ErrorAction SilentlyContinue
@@ -92,7 +92,7 @@ try {
     Start-Sleep -Milliseconds 300
     [UiProbe]::Click(650, 450)    # 输入位置
     Start-Sleep -Milliseconds 500
-    $overlay2 = [UiProbe]::FindByTitle('微信截图助手 - 截图')
+    $overlay2 = [UiProbe]::FindByTitle('截图助手 - 截图')
     $edit = [IntPtr]::Zero
     if ($overlay2 -ne [IntPtr]::Zero) { $edit = [UiProbe]::FindEditControl($overlay2) }
     if ($edit -eq [IntPtr]::Zero) {
@@ -164,7 +164,7 @@ try {
     }
 }
 finally {
-    Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
     if (-not $mock.HasExited) { $mock.Kill() }
     Start-Sleep -Milliseconds 300
 }

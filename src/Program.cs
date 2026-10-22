@@ -54,10 +54,14 @@ namespace XiaoJie
             {
                 MessageBox.Show(
                     AppInfo.FullName + "\r\n\r\n" +
-                    "用法：微信截图助手.exe [参数]\r\n\r\n" +
+                    "用法：截图助手.exe [参数]\r\n\r\n" +
                     "  （无参数）  启动程序并驻留托盘\r\n" +
                     "  --capture   立即截图（托盘已在运行时触发已有实例）\r\n" +
                     "  --settings  打开设置\r\n" +
+                    "  --record    录制屏幕（框选区域）\r\n" +
+                    "  --ocr       框选后提取文字\r\n" +
+                    "  --translate 框选后翻译\r\n" +
+                    "  --redact    框选后智能打码\r\n" +
                     "  --autostart 开机自启时使用（正常启动）\r\n" +
                     "  --selftest  运行内置自检（开发用，写出 selftest-report.txt）\r\n" +
                     "  --version   显示版本号\r\n\r\n" +
@@ -78,7 +82,7 @@ namespace XiaoJie
             Mutex mutex;
             try
             {
-                mutex = new Mutex(true, "Local\\XiaoJie_WeChatShot_SingleInstance_v1", out createdNew);
+                mutex = new Mutex(true, "Local\\ScreenshotHelper_SingleInstance_v1", out createdNew);
             }
             catch
             {
@@ -91,9 +95,7 @@ namespace XiaoJie
                 IntPtr hwnd = Native.FindWindow(null, AppInfo.HiddenWindowTitle);
                 if (hwnd != IntPtr.Zero)
                 {
-                    uint message = AppInfo.WM_APP_SHOW_TOAST;
-                    if (HasArg(args, "--capture")) message = AppInfo.WM_APP_TRIGGER_CAPTURE;
-                    else if (HasArg(args, "--settings")) message = AppInfo.WM_APP_OPEN_SETTINGS;
+                    uint message = CaptureCommand.MessageForArgs(args);
                     Native.PostMessage(hwnd, message, IntPtr.Zero, IntPtr.Zero);
                 }
                 return 0;

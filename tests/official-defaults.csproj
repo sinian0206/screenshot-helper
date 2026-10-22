@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>XiaoJie.OfficialDefaultsRegression</StartupObject>
+    <AssemblyName>OfficialDefaultsRegression</AssemblyName>
+    <OutputPath>..\build_official_defaults\</OutputPath>
+    <BaseIntermediateOutputPath>..\build_official_defaults\obj\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>..\build_official_defaults\obj\</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\src\*.cs" />
+    <Compile Include="official-defaults.cs" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Security" />
+  </ItemGroup>
+</Project>

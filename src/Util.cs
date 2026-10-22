@@ -15,13 +15,17 @@ namespace XiaoJie
 {
     public static class AppInfo
     {
-        public const string Name = "微信截图助手";
-        public const string Version = "1.0.0";
-        public const string FullName = "微信截图助手（DeepSeek 版）";
-        public const string HiddenWindowTitle = "XiaoJie_WeChatShot_Hidden_v1";
+        public const string Name = "截图助手";
+        public const string Version = "1.2.4";
+        public const string FullName = "截图助手";
+        public const string HiddenWindowTitle = "ScreenshotHelper_Hidden_v1";
         public const int WM_APP_TRIGGER_CAPTURE = 0x8001;   // 第二个实例请求截图
         public const int WM_APP_SHOW_TOAST = 0x8002;        // 第二个实例请求提示已在运行
         public const int WM_APP_OPEN_SETTINGS = 0x8003;     // 第二个实例请求打开设置
+        public const int WM_APP_TRIGGER_RECORD = 0x8004;     // 第二个实例请求录制
+        public const int WM_APP_TRIGGER_OCR = 0x8005;
+        public const int WM_APP_TRIGGER_TRANSLATE = 0x8006;
+        public const int WM_APP_TRIGGER_PRIVACY = 0x8007;
     }
 
     public static class UiTheme
@@ -31,15 +35,46 @@ namespace XiaoJie
         public static readonly Color GreenLight = Color.FromArgb(232, 248, 240);
         public static readonly Color Red = Color.FromArgb(250, 81, 81);
         public static readonly Color Orange = Color.FromArgb(255, 152, 0);
-        public static readonly Color TextDark = Color.FromArgb(51, 51, 51);
-        public static readonly Color TextGray = Color.FromArgb(128, 128, 128);
-        public static readonly Color IconColor = Color.FromArgb(72, 72, 72);
-        public static readonly Color Disabled = Color.FromArgb(188, 188, 188);
-        public static readonly Color ToolbarBg = Color.White;
-        public static readonly Color ToolbarBorder = Color.FromArgb(226, 226, 226);
-        public static readonly Color HoverBg = Color.FromArgb(242, 242, 242);
-        public static readonly Color PanelBg = Color.FromArgb(250, 250, 250);
-        public static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
+        public static readonly Color TextDark = Color.FromArgb(31, 41, 55);
+        public static readonly Color TextGray = Color.FromArgb(55, 65, 81);
+        public static readonly Color IconColor = Color.FromArgb(52, 61, 74);
+        public static readonly Color Disabled = Color.FromArgb(85, 95, 109);
+        // 应用文案与按钮使用独立配色，避免改变导出标注的红/绿色。
+        internal static readonly Color TextMuted = Color.FromArgb(75, 85, 99);
+        internal static readonly Color ActionGreen = Color.FromArgb(6, 112, 58);
+        internal static readonly Color ActionGreenHover = Color.FromArgb(5, 94, 47);
+        internal static readonly Color ActionGreenPressed = Color.FromArgb(4, 76, 38);
+        internal static readonly Color ActionRed = Color.FromArgb(181, 35, 42);
+        internal static readonly Color ActionRedHover = Color.FromArgb(154, 27, 33);
+        internal static readonly Color DisabledBackground = Color.FromArgb(234, 238, 242);
+        internal static readonly Color BadgeBackground = Color.FromArgb(26, 32, 39);
+        internal static readonly Color BadgeForeground = Color.White;
+        internal static readonly Color InfoBadgeBackground = Color.FromArgb(255, 250, 250, 251);
+        internal static readonly Color ConsoleBase = Color.FromArgb(250, 250, 251);
+        internal static readonly Color ConsoleRaised = Color.FromArgb(255, 242, 242, 247);
+        internal static readonly Color ConsoleBorder = Color.FromArgb(255, 224, 225, 230);
+        internal static readonly Color ConsoleText = Color.FromArgb(255, 44, 44, 46);
+        internal static readonly Color ConsoleMuted = Color.FromArgb(255, 138, 138, 142);
+        internal static readonly Color Signal = Color.FromArgb(255, 0, 113, 227);
+        internal static readonly Color SignalHover = Color.FromArgb(255, 0, 102, 204);
+        internal static readonly Color SignalText = Color.White;
+        internal static readonly Color Telemetry = Color.FromArgb(255, 0, 113, 227);
+        internal static readonly Color TelemetryDim = Color.FromArgb(255, 234, 242, 255);
+        internal static readonly Color TelemetryBorder = Color.FromArgb(255, 205, 224, 255);
+        internal static readonly Color Critical = Color.FromArgb(255, 215, 0, 21);
+        internal static readonly Color CriticalDim = Color.FromArgb(255, 253, 236, 238);
+        public static readonly Color ToolbarBg = ConsoleBase;
+        public static readonly Color ToolbarBorder = ConsoleBorder;
+        public static readonly Color ToolbarBorderHighlight = Color.FromArgb(58, 255, 255, 255);
+        public static readonly Color HoverBg = ConsoleRaised;
+        public static readonly Color ActiveBg = TelemetryDim;
+        public static readonly Color ActiveBorder = TelemetryBorder;
+        public static readonly Color ConfirmBg = Signal;
+        public static readonly Color ConfirmBgHover = SignalHover;
+        public static readonly Color CloseHoverBg = CriticalDim;
+        public static readonly Color CloseHoverText = Critical;
+        public static readonly Color PanelBg = Color.FromArgb(255, 245, 245, 247);
+        public static readonly Color DarkBg = Color.FromArgb(24, 28, 36);
         public static readonly Color Mask = Color.FromArgb(110, 0, 0, 0);
 
         private static string _uiFont = null;
@@ -50,7 +85,7 @@ namespace XiaoJie
             {
                 if (_uiFont == null)
                 {
-                    _uiFont = "Microsoft YaHei UI";
+                    _uiFont = "Segoe UI Variable";
                     try
                     {
                         using (InstalledFontCollection col = new InstalledFontCollection())
@@ -60,10 +95,10 @@ namespace XiaoJie
                             {
                                 if (string.Equals(ff.Name, _uiFont, StringComparison.OrdinalIgnoreCase)) { found = true; break; }
                             }
-                            if (!found) _uiFont = "Microsoft YaHei";
+                            if (!found) _uiFont = "Microsoft YaHei UI";
                         }
                     }
-                    catch { _uiFont = "Microsoft YaHei"; }
+                    catch { _uiFont = "Microsoft YaHei UI"; }
                 }
                 return _uiFont;
             }
@@ -288,6 +323,98 @@ namespace XiaoJie
         public static int Scale(int value, float scale)
         {
             return (int)Math.Round(value * scale);
+        }
+    }
+
+    /// <summary>物理屏幕像素与图像像素的几何边界，DPI 只影响控件尺寸。</summary>
+    internal static class DisplayGeometry
+    {
+        /// <summary>将物理屏幕选区平移到虚拟桌面截图，保留原始像素尺寸。</summary>
+        public static Rectangle ScreenToImage(Rectangle physicalRect, Rectangle virtualScreen)
+        {
+            return new Rectangle(physicalRect.X - virtualScreen.X, physicalRect.Y - virtualScreen.Y,
+                physicalRect.Width, physicalRect.Height);
+        }
+
+        /// <summary>将虚拟桌面截图中的像素区域平移回物理屏幕。</summary>
+        public static Rectangle ImageToScreen(Rectangle imageRect, Rectangle virtualScreen)
+        {
+            return new Rectangle(imageRect.X + virtualScreen.X, imageRect.Y + virtualScreen.Y,
+                imageRect.Width, imageRect.Height);
+        }
+
+        /// <summary>按目标显示器 DPI 缩放 UI，不能用于图像或选区坐标。</summary>
+        public static int ScaleUi(int pixelsAt96Dpi, float monitorScale)
+        {
+            if (float.IsNaN(monitorScale) || float.IsInfinity(monitorScale) || monitorScale <= 0)
+                monitorScale = 1f;
+            return Math.Max(1, (int)Math.Round(pixelsAt96Dpi * monitorScale));
+        }
+
+        /// <summary>取得各显示器物理工作区，保留负坐标与显示器之间的空隙。</summary>
+        public static Rectangle[] WorkingAreas()
+        {
+            Screen[] screens = Screen.AllScreens;
+            Rectangle[] areas = new Rectangle[screens.Length];
+            for (int i = 0; i < screens.Length; i++) areas[i] = screens[i].WorkingArea;
+            return areas;
+        }
+
+        /// <summary>优先在选区外放置浮窗；没有可用位置时可明确返回 Empty。</summary>
+        public static Rectangle PlaceFloating(Rectangle anchor, Size physicalSize, Rectangle[] workingAreas,
+            int gap, bool requireOutside)
+        {
+            if (workingAreas == null || physicalSize.Width <= 0 || physicalSize.Height <= 0)
+                return Rectangle.Empty;
+            gap = Math.Max(0, gap);
+            foreach (Rectangle work in workingAreas)
+            {
+                if (work.Width < physicalSize.Width || work.Height < physicalSize.Height) continue;
+                Point[] candidates = {
+                    new Point(anchor.Right + gap, anchor.Top),
+                    new Point(anchor.Left - gap - physicalSize.Width, anchor.Top),
+                    new Point(anchor.Left, anchor.Bottom + gap),
+                    new Point(anchor.Left, anchor.Top - gap - physicalSize.Height),
+                    new Point(work.Left + gap, work.Top + gap),
+                    new Point(work.Right - gap - physicalSize.Width, work.Bottom - gap - physicalSize.Height)
+                };
+                foreach (Point candidate in candidates)
+                {
+                    Point clamped = new Point(Math.Max(work.Left, Math.Min(work.Right - physicalSize.Width, candidate.X)),
+                        Math.Max(work.Top, Math.Min(work.Bottom - physicalSize.Height, candidate.Y)));
+                    Rectangle placed = new Rectangle(clamped, physicalSize);
+                    if (!placed.IntersectsWith(anchor)) return placed;
+                }
+            }
+            if (requireOutside) return Rectangle.Empty;
+            Rectangle best = Rectangle.Empty;
+            long bestArea = -1;
+            foreach (Rectangle work in workingAreas)
+            {
+                Rectangle intersection = Rectangle.Intersect(work, anchor);
+                long area = (long)intersection.Width * intersection.Height;
+                if (work.Width > 0 && work.Height > 0 && area > bestArea) { best = work; bestArea = area; }
+            }
+            if (best.IsEmpty) return Rectangle.Empty;
+            Size visibleSize = new Size(Math.Min(physicalSize.Width, best.Width), Math.Min(physicalSize.Height, best.Height));
+            return new Rectangle(new Point(Math.Max(best.Left, Math.Min(best.Right - visibleSize.Width, anchor.Left)),
+                Math.Max(best.Top, Math.Min(best.Bottom - visibleSize.Height, anchor.Bottom + gap))), visibleSize);
+        }
+    }
+
+    /// <summary>辅助窗口排除在桌面捕获之外，不用隐藏窗口触发桌面重绘。</summary>
+    internal static class CaptureExclusion
+    {
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowDisplayAffinity(IntPtr window, uint affinity);
+
+        public static bool TryExclude(Form window)
+        {
+            // 早期 Windows 将 0x11 当作 WDA_MONITOR，捕获会出现黑块，必须明确拒绝。
+            Version version = Environment.OSVersion.Version;
+            if (version.Major < 10 || (version.Major == 10 && version.Build < 19041)) return false;
+            try { return SetWindowDisplayAffinity(window.Handle, 0x11); }
+            catch (EntryPointNotFoundException) { return false; }
         }
     }
 
@@ -647,7 +774,8 @@ namespace XiaoJie
     public static class Autostart
     {
         private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        private const string ValueName = "XiaoJieWeChatShot";
+        private const string ValueName = "ScreenshotHelper";
+        private const string LegacyValueName = "XiaoJieWeChatShot";
 
         public static bool IsEnabled()
         {
@@ -656,7 +784,7 @@ namespace XiaoJie
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKeyPath, false))
                 {
                     if (key == null) return false;
-                    object v = key.GetValue(ValueName);
+                    object v = key.GetValue(ValueName) ?? key.GetValue(LegacyValueName);
                     return v != null && v.ToString().Trim().Length > 0;
                 }
             }
@@ -674,10 +802,12 @@ namespace XiaoJie
                     {
                         string exe = Application.ExecutablePath;
                         key.SetValue(ValueName, "\"" + exe + "\" --autostart");
+                        key.DeleteValue(LegacyValueName, false);
                     }
                     else
                     {
                         key.DeleteValue(ValueName, false);
+                        key.DeleteValue(LegacyValueName, false);
                     }
                 }
                 Log.Write("开机自启已" + (enabled ? "开启" : "关闭"));
@@ -899,39 +1029,6 @@ namespace XiaoJie
 
     public static class WinUtil
     {
-        /// <summary>尝试把微信窗口切到前台（用于“转发”后直接粘贴）。</summary>
-        public static bool ActivateWeChat()
-        {
-            string[] names = new string[] { "Weixin", "WeChat" };
-            foreach (string name in names)
-            {
-                try
-                {
-                    Process[] procs = Process.GetProcessesByName(name);
-                    foreach (Process p in procs)
-                    {
-                        if (p.MainWindowHandle != IntPtr.Zero && Native.IsWindowVisible(p.MainWindowHandle))
-                        {
-                            Native.ShowWindow(p.MainWindowHandle, Native.SW_RESTORE);
-                            if (Native.SetForegroundWindow(p.MainWindowHandle)) return true;
-                            // 前台窗口锁定时的兜底
-                            uint fgThread = Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out uint fgPid);
-                            uint targetThread = Native.GetWindowThreadProcessId(p.MainWindowHandle, out uint targetPid);
-                            if (fgThread != 0 && targetThread != 0 && fgThread != targetThread)
-                            {
-                                Native.AttachThreadInput(fgThread, targetThread, true);
-                                bool ok = Native.SetForegroundWindow(p.MainWindowHandle);
-                                Native.AttachThreadInput(fgThread, targetThread, false);
-                                if (ok) return true;
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-            return false;
-        }
-
         /// <summary>
         /// 获取屏幕坐标下、位于最上层的「目标窗口」矩形（用于截图时智能识别窗口）。
         /// 会跳过 ignoreHwnd（截图覆盖层自身）以及本源进程的所有窗口。

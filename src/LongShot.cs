@@ -14,17 +14,17 @@ namespace XiaoJie
     ///   overlay.Hide();
     ///   Bitmap result = LongShot.Run(selectionScreenRect, ImageUtil.Capture);
     ///   overlay 关闭或恢复。
-    /// Run 自行显示提示条、绿色边框、拼接进度，处理鼠标滚轮/键盘：
+    /// Run 显示实时预览、捕获段、绿色边框，处理鼠标滚轮/键盘：
     ///   - 用户滚动窗口内容时自动抓帧拼接（纵向优先，也支持横向）；
     ///   - Enter / 点击“完成”结束并返回结果图；
     ///   - Esc / 右键（选区内）/ 点击“取消”取消，返回 null。
     /// capture 回调返回指定屏幕矩形的最新画面（物理像素）。
     ///
     /// 交互实现要点（避免干扰用户滚动目标窗口）：
-    ///   * 选区内部没有任何窗口：绿色边框是选区外侧 4 条 2px 的置顶“线条窗口”，
-    ///     控制条放在选区外侧，均为 WS_EX_NOACTIVATE + WS_EX_TOOLWINDOW，不抢焦点、不拦截选区内鼠标；
-    ///   * 通过 WH_MOUSE_LL 低层鼠标钩子感知滚轮（150ms 静默后抓帧，连续滚动时最多 220ms 抓一次），
-    ///     WH_KEYBOARD_LL 感知 PageDown/空格/方向键；另有 ~650ms 定时器兜底拖动滚动条；
+    ///   * 绿色边框采用选区外的环形窗口；预览放在选区外或从捕获中排除，
+    ///     均为 WS_EX_NOACTIVATE + WS_EX_TOOLWINDOW，不抢目标窗口的焦点；
+    ///   * 通过 WH_MOUSE_LL 低层鼠标钩子感知目标窗口滚轮和实际拖动，
+    ///     WH_KEYBOARD_LL 感知目标窗口的 PageDown/空格/方向键；滚动信号合并后抓帧；
     ///   * 只把“内容确实变化”的帧交给拼接器，拼接器再按重叠阈值决定接受/忽略；
     ///   * 线程内用 Application.DoEvents 消息泵驱动，结束后确保钩子注销、辅助窗口全部释放。
     /// 负责队友：longshot
@@ -64,18 +64,25 @@ namespace XiaoJie
     internal sealed class LongShotSession : IDisposable
     {
         // ---- 时间参数（毫秒）----
-        private const int DebounceMs = 150;        // 滚轮停止后多久抓帧
-        private const int CaptureThrottleMs = 220; // 连续滚动时两次抓帧的最小间隔
-        private const int FallbackCaptureMs = 650; // 定时器兜底抓帧间隔（键盘/拖动滚动条）
+        private const int CaptureThrottleMs = 220; // 活跃捕获期内两次抓帧的最小间隔
+        private const int ScrollSettleMs = 120;    // 等待目标窗口处理滚动并重绘
+        private const int PauseAfterMs = 1500;     // 无任何滚动信号多久后进入“已暂停捕获”
         private const int PreviewIntervalMs = 280; // 缩略图刷新间隔
         private const int MaxFrames = 400;         // 最多拼接帧数保护
 
         // ---- 钩子常量 ----
         private const int WH_MOUSE_LL = 14;
         private const int WH_KEYBOARD_LL = 13;
+        private const int WM_MOUSEMOVE = 0x0200;
+        private const int WM_LBUTTONDOWN = 0x0201;
+        private const int WM_LBUTTONUP = 0x0202;
+        private const int WM_RBUTTONDOWN = 0x0204;
+        private const int WM_MBUTTONDOWN = 0x0207;
+        private const int WM_MBUTTONUP = 0x0208;
         private const int WM_MOUSEWHEEL = 0x020A;
         private const int WM_MOUSEHWHEEL = 0x020E;
-        private const int WM_RBUTTONDOWN = 0x0204;
+        private const int WM_KEYDOWN = 0x0100;
+        private const int WM_SYSKEYDOWN = 0x0104;
         private const int VK_RETURN = 0x0D;
         private const int VK_ESCAPE = 0x1B;
         private const int VK_SPACE = 0x20;
@@ -93,11 +100,12 @@ namespace XiaoJie
         private float _scale = 1f;
 
         private LongShotStitcher _stitcher;
+        private LongShotJournal _journal;
         private System.Windows.Forms.Timer _timer;
 
         private LongShotBar _bar;
         private LongShotBorder _border;
-        private bool _barOverlapsRegion;
+        private bool _manualPaused;
 
         private IntPtr _mouseHook = IntPtr.Zero;
         private IntPtr _keyboardHook = IntPtr.Zero;
@@ -109,14 +117,41 @@ namespace XiaoJie
         private bool _finishRequested;
         private bool _cancelled;
         private bool _autoFull;
-        private bool _pendingCapture;
-        private int _lastScrollTick;
         private int _lastCaptureTick;
         private byte[] _lastThumb;
         private Bitmap _preview;
         private int _lastPreviewTick;
         private string _statusText = "";
+        private int _statusTick;
         private bool _disposed;
+        private bool _capturePending;
+        private int _pendingSinceTick;
+        private bool _captureInProgress;
+        private IntPtr _targetWindow;
+        private Point _lastDragPoint;
+
+        /// <summary>捕获阶段：Idle=还没滚动；Active=最近有滚动信号，按节流抓帧；Paused=1.5s 无信号，绝不抓帧。</summary>
+        private enum CapturePhase { Idle, Active, Paused }
+        private CapturePhase _phase = CapturePhase.Idle;
+        private int _lastScrollSignalTick;   // 最近一次滚动/拖拽信号（0=从未）
+        private bool _leftDown;
+        private bool _middleDown;
+
+        private void SignalScroll()
+        {
+            if (_finished || _cancelRequested || _finishRequested || _manualPaused) return;
+            _lastScrollSignalTick = Environment.TickCount;
+            if (!_capturePending) _pendingSinceTick = _lastScrollSignalTick;
+            _capturePending = true;
+            if (_phase != CapturePhase.Active)
+            {
+                bool wasPaused = _phase == CapturePhase.Paused;
+                _phase = CapturePhase.Active;
+                _statusText = "";
+                Dbg(wasPaused ? "检测到滚动信号，恢复捕获" : "检测到滚动信号，开始捕获");
+                UpdateBar(false, _lastScrollSignalTick);
+            }
+        }
 
         // ---- 诊断（环境变量 XJ_LONGSHOT_DEBUG=1 / XJ_LONGSHOT_DUMP=<目录>）----
         private static readonly bool DebugEnabled = Environment.GetEnvironmentVariable("XJ_LONGSHOT_DEBUG") == "1";
@@ -165,7 +200,9 @@ namespace XiaoJie
                 Thread.Sleep(60);
                 Application.DoEvents();
 
-                _stitcher = new LongShotStitcher(Math.Max(1, _region.Width));
+                _targetWindow = RootWindowAt(center);
+                _journal = new LongShotJournal(Math.Max(1, _region.Width));
+                _stitcher = _journal.Stitcher;
                 _timer = new System.Windows.Forms.Timer();
                 _timer.Interval = 60;
                 _timer.Tick += OnTimerTick;
@@ -178,7 +215,7 @@ namespace XiaoJie
                         Toast.Show("长截图失败：无法捕获选区画面");
                         return null;
                     }
-                    if (!_stitcher.AddFrame(first))
+                    if (!_journal.AddFrame(first))
                     {
                         Toast.Show("长截图失败：" + _stitcher.Status);
                         return null;
@@ -207,6 +244,11 @@ namespace XiaoJie
                     if (_finishRequested) break;
                     Thread.Sleep(3);
                 }
+
+                // 完成时若仍处于活跃捕获窗口内，安全冲刷最后一帧；
+                // 若已进入「暂停捕获」，绝不补抓，保证结果高度 == 暂停时进度。
+                if (_finishRequested && !_cancelled) FlushPendingFrame();
+                if (_cancelRequested) _cancelled = true;
 
                 _finished = true;
                 if (_timer != null) _timer.Stop();
@@ -250,15 +292,9 @@ namespace XiaoJie
 
                 if (_stitcher.AppendedFrames <= 1)
                 {
-                    // 用户没有产生有效滚动：返回当前选区画面（若抓帧失败则退回首帧）
-                    Bitmap fresh = CaptureRegion();
-                    if (fresh != null)
-                    {
-                        Toast.Show("未检测到滚动，已返回当前选区画面");
-                        return fresh;
-                    }
+                    // 结束动作不能重新采集画面，否则会把暂停后变化的内容带入结果。
                     Bitmap single = _stitcher.TakeResult();
-                    if (single != null) Toast.Show("未检测到滚动，已返回当前选区画面");
+                    if (single != null) Toast.Show("未拼接到新增内容，已返回首帧画面");
                     return single;
                 }
 
@@ -285,18 +321,11 @@ namespace XiaoJie
 
         private Bitmap CaptureRegion()
         {
-            bool hidBar = false;
             try
             {
-                // 极端情况下（选区几乎铺满屏幕）控制条只能压在选区内，抓帧前临时隐藏
-                if (_barOverlapsRegion && _bar != null && !_bar.IsDisposed && _bar.Visible)
-                {
-                    _bar.Visible = false;
-                    hidBar = true;
-                    Application.DoEvents();
-                    Thread.Sleep(30);
-                }
+                // 浮窗始终在选区外，或通过捕获排除显示；抓帧不改变窗口可见性。
                 Application.DoEvents();
+                if (_manualPaused || _cancelRequested || _finished) return null;
                 return _capture(_region);
             }
             catch (Exception ex)
@@ -304,36 +333,53 @@ namespace XiaoJie
                 Log.Write("长截图抓帧失败: " + ex.Message);
                 return null;
             }
-            finally
-            {
-                if (hidBar && _bar != null && !_bar.IsDisposed)
-                {
-                    try { _bar.Visible = true; } catch { }
-                }
-            }
+        }
+
+        private void ToggleManualPause()
+        {
+            _manualPaused = !_manualPaused;
+            _capturePending = false;
+            _phase = _manualPaused ? CapturePhase.Paused : CapturePhase.Idle;
+            _statusText = _manualPaused ? "已暂停；可检查接缝、撤回末段" : "已继续；滚回最后保留的画面后再滚动";
+            _statusTick = Environment.TickCount;
+            UpdateBar(true, _statusTick);
+        }
+
+        private void ChangeLastSegment(bool redo)
+        {
+            if (_journal == null || _captureInProgress) return;
+            _manualPaused = true;
+            _capturePending = false;
+            _phase = CapturePhase.Paused;
+            bool changed = redo ? _journal.Redo() : _journal.Undo();
+            _stitcher = _journal.Stitcher;
+            _lastThumb = null;
+            _statusText = changed ? (redo ? "已恢复末段" : "已撤回末段；可恢复，或滚回后继续重试") : "没有可调整的末段";
+            _statusTick = Environment.TickCount;
+            _lastPreviewTick = unchecked(_statusTick - PreviewIntervalMs);
+            UpdateBar(true, _statusTick);
         }
 
         private void OnTimerTick(object sender, EventArgs e)
         {
-            if (_finished) return;
+            if (_finished || _cancelRequested || _finishRequested || _captureInProgress || _manualPaused) return;
             try
             {
                 int now = Environment.TickCount;
-                bool due = false;
-                if (_pendingCapture &&
-                    ((now - _lastScrollTick) >= DebounceMs || (now - _lastCaptureTick) >= CaptureThrottleMs))
+                if (_phase == CapturePhase.Active)
                 {
-                    due = true;
+                    if ((now - _lastScrollSignalTick) >= PauseAfterMs)
+                    {
+                        EnterPaused(now);
+                        return;
+                    }
+                    // 每批输入只消费一次。按住鼠标和画面动画都不能自行续订抓帧。
+                    if (_capturePending && (now - _lastCaptureTick) >= CaptureThrottleMs &&
+                        ((now - _lastScrollSignalTick) >= ScrollSettleMs ||
+                         (now - _pendingSinceTick) >= CaptureThrottleMs))
+                        CaptureAndStitch(now);
                 }
-                else if ((now - _lastCaptureTick) >= FallbackCaptureMs)
-                {
-                    due = true; // 兜底：PageDown/拖动滚动条/中键滚动
-                }
-                if (due)
-                {
-                    _pendingCapture = false;
-                    CaptureAndStitch(now);
-                }
+                // Idle / Paused：无滚动信号，绝不抓帧、绝不 AddFrame
             }
             catch (Exception ex)
             {
@@ -341,33 +387,90 @@ namespace XiaoJie
             }
         }
 
-        private void CaptureAndStitch(int now)
+        /// <summary>无滚动信号超过 PauseAfterMs：进入“已暂停捕获”，记录当前进度供验收核对。</summary>
+        private void EnterPaused(int now)
         {
-            if (_finished) return;
-            Bitmap frame = CaptureRegion();
-            if (frame == null) return;
-            _lastCaptureTick = now;
-            int dumpNo = -1;
-            if (_dumpDir != null)
-            {
-                dumpNo = _dumpIndex++;
-                try { frame.Save(Path.Combine(_dumpDir, string.Format("frame_{0:00}.png", dumpNo)), ImageFormat.Png); }
-                catch { }
-            }
+            _phase = CapturePhase.Paused;
+            _capturePending = false;
+            _statusText = "";
+            Size size = Size.Empty;
+            int frames = 0;
             try
             {
+                if (_stitcher != null)
+                {
+                    size = _stitcher.ResultSize;
+                    frames = _stitcher.AppendedFrames;
+                }
+            }
+            catch { }
+            try
+            {
+                Log.Write("长截图暂停捕获: 已拼接 " + size.Width + " × " + size.Height +
+                    "，帧数 " + frames + "，无滚动信号 " + (now - _lastScrollSignalTick) + "ms");
+            }
+            catch { }
+            Dbg("进入暂停捕获: 画布 " + size + " 帧数=" + frames);
+            UpdateBar(true, now);
+        }
+
+        /// <summary>完成前：仅当仍在滚动信号活跃窗口内才补抓一帧；暂停状态不抓（保证高度不增长）。</summary>
+        private void FlushPendingFrame()
+        {
+            try
+            {
+                if (_cancelRequested || _captureInProgress || _manualPaused || !_capturePending || _phase != CapturePhase.Active) return;
+                int now = Environment.TickCount;
+                if ((now - _lastScrollSignalTick) >= PauseAfterMs) return;
+                // 完成可能紧接最后一次滚轮，等待其重绘；期间仍处理取消消息。
+                int remaining = ScrollSettleMs - (now - _lastScrollSignalTick);
+                if (remaining > 0)
+                {
+                    Thread.Sleep(remaining);
+                    Application.DoEvents();
+                    if (_cancelRequested || _finished) return;
+                    now = Environment.TickCount;
+                }
+                Dbg("完成前冲刷最后一帧");
+                CaptureAndStitch(now);
+            }
+            catch (Exception ex)
+            {
+                Log.Write("长截图完成前抓帧失败: " + ex.Message);
+            }
+        }
+
+        private void CaptureAndStitch(int now)
+        {
+            if (_finished || _cancelRequested || _captureInProgress || !_capturePending ||
+                _phase != CapturePhase.Active) return;
+            // CaptureRegion 会泵送窗口消息。先消费本批信号并阻止重入，期间的新滚动留给下一批。
+            _captureInProgress = true;
+            _capturePending = false;
+            Bitmap frame = null;
+            try
+            {
+                frame = CaptureRegion();
+                _lastCaptureTick = Environment.TickCount;
+                if (frame == null || _cancelRequested || _finished || _manualPaused) return;
+                int dumpNo = -1;
+                if (_dumpDir != null)
+                {
+                    dumpNo = _dumpIndex++;
+                    try { frame.Save(Path.Combine(_dumpDir, string.Format("frame_{0:00}.png", dumpNo)), ImageFormat.Png); }
+                    catch { }
+                }
                 byte[] thumb = ComputeThumb(frame);
                 if (_lastThumb != null && !ThumbChanged(_lastThumb, thumb))
                 {
                     Dbg("帧#" + dumpNo + " 内容未变化，跳过");
                     return; // 内容没有变化（例如光标闪烁/动画），不交给拼接器
                 }
-                _lastThumb = thumb;
-
-                bool added = _stitcher.AddFrame(frame);
+                bool added = _journal != null ? _journal.AddFrame(frame) : _stitcher.AddFrame(frame);
                 Dbg("帧#" + dumpNo + " AddFrame=" + added + " 状态=" + _stitcher.Status + " 画布=" + _stitcher.ResultSize);
                 if (added)
                 {
+                    _lastThumb = thumb;
                     _statusText = "";
                     UpdateBar(true, now);
                     if (_stitcher.IsFull)
@@ -384,13 +487,21 @@ namespace XiaoJie
                 }
                 else
                 {
-                    _statusText = _stitcher.Status;
+                    // 明确停在最后已确认的接缝，用户恢复后可滚回重试。
+                    _manualPaused = true;
+                    _capturePending = false;
+                    _phase = CapturePhase.Paused;
+                    _statusText = _journal != null && _journal.HistoryFull
+                        ? "原帧历史达到内存上限；请完成本次长截图"
+                        : "该帧未拼接，已暂停；滚回保留画面后继续重试";
+                    _statusTick = now;
                     UpdateBar(false, now);
                 }
             }
             finally
             {
-                frame.Dispose();
+                if (frame != null) frame.Dispose();
+                _captureInProgress = false;
             }
         }
 
@@ -405,14 +516,28 @@ namespace XiaoJie
                 _lastPreviewTick = now;
                 try
                 {
-                    Bitmap p = _stitcher.CreatePreview(240);
+                    Bitmap p = _stitcher.CreatePreview(1000);
                     Bitmap old = _preview;
                     _preview = p;
                     if (old != null) old.Dispose();
                 }
                 catch { }
             }
-            try { _bar.SetStatus(size, _preview, _statusText); } catch { }
+            string status;
+            if (_manualPaused)
+                status = string.IsNullOrEmpty(_statusText) ? "已暂停；点击继续后才会捕获" : _statusText;
+            else if (_phase == CapturePhase.Paused)
+                status = "已暂停捕获，滚动继续拼接 / Enter 完成";
+            else if (_phase == CapturePhase.Idle)
+                status = "滚动目标窗口开始截取（Enter 完成 / Esc 取消）";
+            else if (!string.IsNullOrEmpty(_statusText) && (now - _statusTick) < 2500)
+                status = _statusText;
+            else
+                status = "";
+            try { _bar.SetStatus(size, _preview, status, _manualPaused,
+                _journal != null ? _journal.SegmentSizes() : new Size[0],
+                _journal != null ? _journal.SegmentBounds() : new Rectangle[0],
+                _journal != null && _journal.CanUndo, _journal != null && _journal.CanRedo); } catch { }
         }
 
         /// <summary>32×32 灰度缩略签名，用于“内容是否变化”的快速判断。</summary>
@@ -510,54 +635,50 @@ namespace XiaoJie
         {
             try
             {
-                _bar = new LongShotBar(_scale,
-                    delegate { _finishRequested = true; },
-                    delegate { _cancelRequested = true; });
                 Rectangle work = Screen.FromRectangle(_region).WorkingArea;
-                int gap = DpiUtil.Scale(10, _scale);
-                Size size = _bar.Size;
-                Point location;
-                if (!TryPlaceOutside(work, size, gap, out location))
+                float previewScale = Math.Min(_scale, Math.Min(work.Width / 480f, work.Height / 600f));
+                Rectangle placement = Rectangle.Empty;
+                // 预览可能放到另一块显示器，字体按实际放置屏幕缩放。
+                foreach (Rectangle area in DisplayGeometry.WorkingAreas())
                 {
-                    // 没有完全在选区外的位置：退而求其次，放到工作区右下角（可能压住选区，抓帧时临时隐藏）
-                    location = new Point(work.Right - size.Width - gap, work.Bottom - size.Height - gap);
-                    if (location.X < work.Left) location.X = work.Left;
-                    if (location.Y < work.Top) location.Y = work.Top;
+                    float candidateScale = Math.Max(0.7f, Math.Min(DpiUtil.ScaleAtPoint(
+                        new Point(area.X + area.Width / 2, area.Y + area.Height / 2)),
+                        Math.Min(area.Width / 480f, area.Height / 600f)));
+                    Size candidateSize = new Size((int)Math.Round(460 * candidateScale), (int)Math.Round(580 * candidateScale));
+                    placement = DisplayGeometry.PlaceFloating(_region, candidateSize, new[] { area },
+                        DpiUtil.Scale(10, candidateScale), true);
+                    if (!placement.IsEmpty) { previewScale = candidateScale; break; }
                 }
-                _bar.Location = location;
+                _bar = new LongShotBar(previewScale,
+                    delegate { _finishRequested = true; },
+                    delegate { _cancelRequested = true; }, ToggleManualPause,
+                    delegate { ChangeLastSegment(false); }, delegate { ChangeLastSegment(true); },
+                    delegate { return _stitcher.TakeResult(); });
+                int gap = DpiUtil.Scale(10, _scale);
+                if (placement.IsEmpty)
+                {
+                    placement = DisplayGeometry.PlaceFloating(_region, _bar.Size,
+                        DisplayGeometry.WorkingAreas(), gap, false);
+                    if (!CaptureExclusion.TryExclude(_bar))
+                    {
+                        _bar.Dispose();
+                        _bar = null;
+                        Toast.Show("选区外无预览空间；当前系统不支持排除捕获。Enter 完成，Esc 取消");
+                        Thread.Sleep(1000);
+                        Toast.HideCurrent();
+                        return;
+                    }
+                }
+                _bar.Bounds = placement;
+                CaptureExclusion.TryExclude(_bar);
                 _bar.Show();
-                _barOverlapsRegion = _bar.Bounds.IntersectsWith(_region);
-                if (_barOverlapsRegion) Log.Write("长截图控制条与选区重叠，抓帧时将临时隐藏");
             }
             catch (Exception ex)
             {
                 Log.Write("长截图控制条创建失败: " + ex.Message);
+                if (_bar != null) { try { _bar.Dispose(); } catch { } }
                 _bar = null;
             }
-        }
-
-        private bool TryPlaceOutside(Rectangle work, Size size, int gap, out Point location)
-        {
-            // 右 / 左 / 下 / 上，优先右侧并与选区顶部对齐
-            Point[] candidates = new Point[]
-            {
-                new Point(_region.Right + gap, _region.Top),
-                new Point(_region.Left - gap - size.Width, _region.Top),
-                new Point(_region.Left, _region.Bottom + gap),
-                new Point(_region.Left, _region.Top - gap - size.Height)
-            };
-            for (int i = 0; i < candidates.Length; i++)
-            {
-                Point p = candidates[i];
-                if (p.X < work.Left || p.Y < work.Top) continue;
-                if (p.X + size.Width > work.Right || p.Y + size.Height > work.Bottom) continue;
-                Rectangle bounds = new Rectangle(p, size);
-                if (bounds.IntersectsWith(_region)) continue;
-                location = p;
-                return true;
-            }
-            location = Point.Empty;
-            return false;
         }
 
         private void RemoveAuxWindows()
@@ -630,14 +751,41 @@ namespace XiaoJie
                 try
                 {
                     int msg = wParam.ToInt32();
+                    MSLLHOOKSTRUCT data = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                    Point point = new Point(data.pt.X, data.pt.Y);
                     if (msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL)
                     {
-                        _pendingCapture = true;
-                        _lastScrollTick = Environment.TickCount;
+                        if (IsTargetPoint(point)) SignalScroll();
+                    }
+                    else if (msg == WM_MOUSEMOVE)
+                    {
+                        if ((_leftDown || _middleDown) && IsTargetPoint(point) &&
+                            (Math.Abs(point.X - _lastDragPoint.X) >= 2 || Math.Abs(point.Y - _lastDragPoint.Y) >= 2))
+                        {
+                            _lastDragPoint = point;
+                            SignalScroll();
+                        }
+                    }
+                    else if (msg == WM_LBUTTONDOWN)
+                    {
+                        _leftDown = IsTargetPoint(point);
+                        _lastDragPoint = point;
+                    }
+                    else if (msg == WM_LBUTTONUP)
+                    {
+                        _leftDown = false;
+                    }
+                    else if (msg == WM_MBUTTONDOWN)
+                    {
+                        _middleDown = IsTargetPoint(point);
+                        _lastDragPoint = point;
+                    }
+                    else if (msg == WM_MBUTTONUP)
+                    {
+                        _middleDown = false;
                     }
                     else if (msg == WM_RBUTTONDOWN)
                     {
-                        MSLLHOOKSTRUCT data = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
                         if (_region.Contains(data.pt.X, data.pt.Y))
                         {
                             _cancelRequested = true;
@@ -658,26 +806,41 @@ namespace XiaoJie
                 {
                     KBDLLHOOKSTRUCT data = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
                     int vk = (int)data.vkCode;
+                    bool keyDown = wParam.ToInt32() == WM_KEYDOWN || wParam.ToInt32() == WM_SYSKEYDOWN;
                     if (vk == VK_ESCAPE)
                     {
-                        _cancelRequested = true;
+                        if (keyDown) _cancelRequested = true;
                         return (IntPtr)1;
                     }
                     if (vk == VK_RETURN)
                     {
-                        _finishRequested = true;
+                        if (keyDown) _finishRequested = true;
                         return (IntPtr)1;
                     }
-                    if (vk == VK_SPACE || vk == VK_PRIOR || vk == VK_NEXT || vk == VK_HOME || vk == VK_END ||
-                        vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT)
+                    if (keyDown && _targetWindow != IntPtr.Zero &&
+                        Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT) == _targetWindow &&
+                        (vk == VK_SPACE || vk == VK_PRIOR || vk == VK_NEXT || vk == VK_HOME || vk == VK_END ||
+                         vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT))
                     {
-                        _pendingCapture = true;
-                        _lastScrollTick = Environment.TickCount;
+                        SignalScroll();
                     }
                 }
                 catch { }
             }
             return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+        }
+
+        private static IntPtr RootWindowAt(Point point)
+        {
+            IntPtr window = Native.WindowFromPoint(new Native.POINT(point.X, point.Y));
+            return window == IntPtr.Zero ? IntPtr.Zero : Native.GetAncestor(window, Native.GA_ROOT);
+        }
+
+        private bool IsTargetPoint(Point point)
+        {
+            if (_bar != null && !_bar.IsDisposed && _bar.Bounds.Contains(point)) return false;
+            // 滚动条可能在选区外，仍接受同一目标窗口的输入。
+            return _targetWindow == IntPtr.Zero ? _region.Contains(point) : RootWindowAt(point) == _targetWindow;
         }
 
         // ==================================================================
@@ -743,6 +906,7 @@ namespace XiaoJie
             UninstallHooks();
             RemoveAuxWindows();
             if (_preview != null) { try { _preview.Dispose(); } catch { } _preview = null; }
+            if (_journal != null) { try { _journal.Dispose(); } catch { } _journal = null; _stitcher = null; }
             if (_stitcher != null) { try { _stitcher.Dispose(); } catch { } _stitcher = null; }
         }
     }
@@ -815,71 +979,63 @@ namespace XiaoJie
         }
     }
 
-    /// <summary>长截图控制条：标题/提示/实时进度/缩略图/完成与取消按钮。不抢焦点。</summary>
+    /// <summary>实时预览、捕获段列表和可恢复的末段调整；不会抢占目标窗口焦点。</summary>
     internal sealed class LongShotBar : Form
     {
         private readonly float _scale;
-        private readonly Action _onFinish;
-        private readonly Action _onCancel;
-        private readonly Font _titleFont;
-        private readonly Font _hintFont;
-        private readonly Font _progressFont;
-        private readonly Font _smallFont;
-        private readonly Font _buttonFont;
-
-        private Size _progress = Size.Empty;
-        private Bitmap _preview;
+        private readonly Action _onFinish, _onCancel, _onPause, _onUndo, _onRedo;
+        private readonly Func<Bitmap> _snapshot;
+        private readonly Font _titleFont, _font, _smallFont;
+        private Bitmap _preview, _full;
+        private Size _progress;
+        private Size[] _segments = new Size[0];
+        private Rectangle[] _segmentBounds = new Rectangle[0];
         private string _status = "";
-        private bool _hoverFinish;
-        private bool _hoverCancel;
-        private Rectangle _finishRect;
-        private Rectangle _cancelRect;
-        private Rectangle _thumbRect;
+        private bool _paused, _canUndo, _canRedo;
+        private int _hover = -1;
+        private int _selectedSegment = -1;
+        private int _listStart = -1;
+        private Point _offset;
+        private readonly Rectangle[] _buttons = new Rectangle[5];
+        private Rectangle _thumbRect, _listRect;
 
-        public LongShotBar(float scale, Action onFinish, Action onCancel)
+        public LongShotBar(float scale, Action finish, Action cancel, Action pause, Action undo, Action redo,
+            Func<Bitmap> snapshot)
         {
-            _scale = scale;
-            _onFinish = onFinish;
-            _onCancel = onCancel;
+            _scale = Math.Max(0.7f, scale);
+            _onFinish = finish; _onCancel = cancel; _onPause = pause; _onUndo = undo; _onRedo = redo;
+            _snapshot = snapshot;
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
             AutoScaleMode = AutoScaleMode.None;
             BackColor = Color.White;
+            Text = "长截图实时预览";
+            AccessibleName = Text;
             DoubleBuffered = true;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
-            Size = new Size(S(420), S(168));
-            _titleFont = UiTheme.Font(S(15f), FontStyle.Bold);
-            _hintFont = UiTheme.Font(S(11.5f));
-            _progressFont = UiTheme.Font(S(15f), FontStyle.Bold);
-            _smallFont = UiTheme.Font(S(11.5f));
-            _buttonFont = UiTheme.Font(S(12.5f));
-            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(0, 0, Width, Height), S(10f)))
-            {
-                Region = new Region(path);
-            }
+            Size = new Size(S(460), S(580));
+            _titleFont = UiTheme.Font(S(16), FontStyle.Bold);
+            _font = UiTheme.Font(S(13));
+            _smallFont = UiTheme.Font(S(11));
         }
 
-        private int S(float v)
-        {
-            return (int)Math.Round(v * _scale);
-        }
+        private int S(float value) { return (int)Math.Round(value * _scale); }
 
-        public void SetStatus(Size progress, Bitmap preview, string status)
+        public void SetStatus(Size progress, Bitmap preview, string status, bool paused, Size[] segments,
+            Rectangle[] segmentBounds, bool canUndo, bool canRedo)
         {
             if (IsDisposed) return;
-            _progress = progress;
-            _preview = preview;
-            _status = status ?? "";
+            bool changed = progress != _progress || segments.Length != _segments.Length;
+            _progress = progress; _preview = preview; _status = status ?? ""; _paused = paused;
+            _segments = segments; _segmentBounds = segmentBounds; _canUndo = canUndo; _canRedo = canRedo;
+            if (_selectedSegment >= segments.Length) _selectedSegment = segments.Length - 1;
+            if (_full != null && changed) RefreshFullPreview();
             Invalidate();
         }
 
-        protected override bool ShowWithoutActivation
-        {
-            get { return true; }
-        }
-
+        protected override bool ShowWithoutActivation { get { return true; } }
         protected override CreateParams CreateParams
         {
             get
@@ -893,126 +1049,172 @@ namespace XiaoJie
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
+            g.Clear(Color.White);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (SolidBrush bg = new SolidBrush(Color.White)) g.FillRectangle(bg, ClientRectangle);
-            ImageUtil.DrawRounded(g, UiTheme.ToolbarBorder, new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), S(10f), 1f);
-
-            int pad = S(16);
-            int textWidth = S(252);
-            TextRenderer.DrawText(g, "滚动截取长图", _titleFont, new Rectangle(pad, S(12), textWidth, S(22)),
-                UiTheme.TextDark, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(g, "滚轮 / PageDown 滚动目标窗口，自动拼接", _hintFont,
-                new Rectangle(pad, S(38), textWidth, S(18)), UiTheme.TextGray,
-                TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-
-            string progressText = _progress.Width > 0
-                ? "已拼接 " + _progress.Width + " × " + _progress.Height
-                : "已拼接 …";
-            TextRenderer.DrawText(g, progressText, _progressFont, new Rectangle(pad, S(60), textWidth, S(24)),
-                UiTheme.Green, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-
-            string hint = string.IsNullOrEmpty(_status) ? "Enter 完成，Esc 取消" : _status;
-            Color hintColor = string.IsNullOrEmpty(_status) ? UiTheme.TextGray : UiTheme.Orange;
-            TextRenderer.DrawText(g, hint, _smallFont, new Rectangle(pad, S(88), textWidth, S(20)),
-                hintColor, TextFormatFlags.Left | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter |
-                TextFormatFlags.EndEllipsis);
-
-            // 缩略图
-            _thumbRect = new Rectangle(Width - pad - S(116), S(12), S(116), S(96));
-            using (SolidBrush box = new SolidBrush(Color.FromArgb(250, 250, 250)))
-                g.FillRectangle(box, _thumbRect);
-            using (Pen pen = new Pen(UiTheme.ToolbarBorder))
-                g.DrawRectangle(pen, _thumbRect);
-            if (_preview != null && _preview.Width > 0 && _preview.Height > 0)
+            using (Pen outline = new Pen(UiTheme.ToolbarBorder)) g.DrawRectangle(outline, 0, 0, Width - 1, Height - 1);
+            DrawLabel(g, "长截图实时预览", _titleFont, new Rectangle(S(16), S(10), Width - S(32), S(28)), UiTheme.TextDark);
+            DrawLabel(g, "已拼接 " + _progress.Width + " × " + _progress.Height + " · " + _segments.Length + " 段", _font,
+                new Rectangle(S(16), S(42), Width - S(32), S(24)), UiTheme.ActionGreen);
+            DrawLabel(g, _status, _smallFont, new Rectangle(S(16), S(72), Width - S(32), S(36)), UiTheme.TextGray, true);
+            int bottom = Height - S(125);
+            _thumbRect = new Rectangle(S(16), S(115), Math.Max(S(100), Width - S(162)), Math.Max(S(80), bottom - S(115)));
+            _listRect = new Rectangle(_thumbRect.Right + S(10), _thumbRect.Top, Width - _thumbRect.Right - S(26), _thumbRect.Height);
+            using (SolidBrush fill = new SolidBrush(UiTheme.PanelBg)) g.FillRectangle(fill, _thumbRect);
+            using (Pen outline = new Pen(UiTheme.ToolbarBorder)) g.DrawRectangle(outline, _thumbRect);
+            DrawPreview(g);
+            DrawLabel(g, "捕获段", _smallFont, new Rectangle(_listRect.X, _listRect.Y, _listRect.Width, S(22)), UiTheme.TextGray);
+            int visible = Math.Max(1, (_listRect.Height - S(28)) / S(32));
+            int first = FirstVisibleSegment(visible);
+            for (int i = first; i < _segments.Length; i++)
             {
-                Rectangle inner = new Rectangle(_thumbRect.X + 2, _thumbRect.Y + 2, _thumbRect.Width - 4, _thumbRect.Height - 4);
-                float fit = Math.Min((float)inner.Width / _preview.Width, (float)inner.Height / _preview.Height);
-                int w = Math.Max(1, (int)Math.Round(_preview.Width * fit));
-                int h = Math.Max(1, (int)Math.Round(_preview.Height * fit));
-                int x = inner.X + (inner.Width - w) / 2;
-                int y = inner.Y + (inner.Height - h) / 2;
-                g.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                g.DrawImage(_preview, new Rectangle(x, y, w, h));
+                Rectangle row = new Rectangle(_listRect.X, _listRect.Y + S(26) + (i - first) * S(32), _listRect.Width, S(30));
+                if (i == _selectedSegment) using (SolidBrush fill = new SolidBrush(UiTheme.GreenLight)) g.FillRectangle(fill, row);
+                DrawLabel(g, (i + 1) + " · " + _segments[i].Width + "×" + _segments[i].Height, _smallFont, row, UiTheme.TextDark);
             }
-
-            // 按钮
-            _finishRect = new Rectangle(pad, Height - pad - S(34), S(126), S(34));
-            _cancelRect = new Rectangle(_finishRect.Right + S(10), _finishRect.Top, S(100), S(34));
-            DrawButton(g, _finishRect, "完成 (Enter)", true, _hoverFinish);
-            DrawButton(g, _cancelRect, "取消 (Esc)", false, _hoverCancel);
+            DrawLabel(g, _full == null ? "点击预览看原始像素；点击段定位接缝" : "原始像素 · 滚轮上下查看；点击预览恢复适应",
+                _smallFont, new Rectangle(S(16), bottom + S(6), Width - S(32), S(25)), UiTheme.TextGray);
+            int gap = S(8), buttonWidth = (Width - S(32) - gap * 2) / 3;
+            _buttons[0] = new Rectangle(S(16), Height - S(86), buttonWidth, S(32));
+            _buttons[1] = new Rectangle(_buttons[0].Right + gap, _buttons[0].Y, buttonWidth, S(32));
+            _buttons[2] = new Rectangle(_buttons[1].Right + gap, _buttons[0].Y, buttonWidth, S(32));
+            _buttons[3] = new Rectangle(S(16), Height - S(46), (Width - S(40)) / 2, S(32));
+            _buttons[4] = new Rectangle(_buttons[3].Right + gap, _buttons[3].Y, (Width - S(40)) / 2, S(32));
+            DrawButton(g, 0, _paused ? "继续捕获" : "暂停捕获", true);
+            DrawButton(g, 1, "撤回末段", _canUndo);
+            DrawButton(g, 2, "恢复末段", _canRedo);
+            DrawButton(g, 3, "完成 (Enter)", true);
+            DrawButton(g, 4, "取消 (Esc)", true);
         }
 
-        private void DrawButton(Graphics g, Rectangle rect, string text, bool primary, bool hover)
+        private void DrawPreview(Graphics g)
         {
-            float radius = S(6f);
-            if (primary)
+            Bitmap source = _full ?? _preview;
+            if (source == null) return;
+            System.Drawing.Drawing2D.GraphicsState state = g.Save();
+            try
             {
-                Color fill = hover ? UiTheme.GreenDark : UiTheme.Green;
-                using (GraphicsPath path = ImageUtil.RoundedRect(rect, radius))
-                using (SolidBrush brush = new SolidBrush(fill)) g.FillPath(brush, path);
-                TextRenderer.DrawText(g, text, _buttonFont, rect, Color.White,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                g.SetClip(_thumbRect);
+                float zoom = _full != null ? 1f : Math.Min((float)_thumbRect.Width / source.Width, (float)_thumbRect.Height / source.Height);
+                int w = Math.Max(1, (int)Math.Round(source.Width * zoom));
+                int h = Math.Max(1, (int)Math.Round(source.Height * zoom));
+                int x = _thumbRect.X + Math.Max(0, (_thumbRect.Width - w) / 2) - (_full != null ? _offset.X : 0);
+                int y = _thumbRect.Y + Math.Max(0, (_thumbRect.Height - h) / 2) - (_full != null ? _offset.Y : 0);
+                g.InterpolationMode = _full != null ? InterpolationMode.NearestNeighbor : InterpolationMode.HighQualityBilinear;
+                if (_full != null) g.DrawImageUnscaled(source, x, y);
+                else g.DrawImage(source, new Rectangle(x, y, w, h));
+                float sx = (float)w / Math.Max(1, _progress.Width), sy = (float)h / Math.Max(1, _progress.Height);
+                using (Pen seam = new Pen(Color.FromArgb(210, UiTheme.Orange), Math.Max(1, _scale)))
+                {
+                    seam.DashStyle = DashStyle.Dash;
+                    for (int i = 1; i < _segmentBounds.Length; i++)
+                    {
+                        Rectangle part = _segmentBounds[i];
+                        float px = x + part.X * sx, py = y + part.Y * sy;
+                        if (part.Width < _progress.Width) g.DrawLine(seam, px, y, px, y + h);
+                        else g.DrawLine(seam, x, py, x + w, py);
+                    }
+                }
             }
-            else
-            {
-                Color fill = hover ? UiTheme.HoverBg : Color.White;
-                using (GraphicsPath path = ImageUtil.RoundedRect(rect, radius))
-                using (SolidBrush brush = new SolidBrush(fill)) g.FillPath(brush, path);
-                ImageUtil.DrawRounded(g, UiTheme.ToolbarBorder, rect, radius, 1f);
-                TextRenderer.DrawText(g, text, _buttonFont, rect, UiTheme.IconColor,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-            }
+            finally { g.Restore(state); }
+        }
+
+        private void DrawButton(Graphics g, int index, string label, bool enabled)
+        {
+            Rectangle rect = _buttons[index];
+            Color fill = index == 3 ? UiTheme.ActionGreen : (_hover == index ? UiTheme.HoverBg : Color.White);
+            if (!enabled) fill = UiTheme.PanelBg;
+            using (SolidBrush brush = new SolidBrush(fill)) g.FillRectangle(brush, rect);
+            using (Pen outline = new Pen(UiTheme.ToolbarBorder)) g.DrawRectangle(outline, rect);
+            DrawLabel(g, label, _font, rect, !enabled ? UiTheme.Disabled : index == 3 ? Color.White : UiTheme.TextDark);
+        }
+
+        private static void DrawLabel(Graphics g, string text, Font font, Rectangle rect, Color color, bool wrap = false)
+        {
+            TextRenderer.DrawText(g, text, font, rect, color, TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                TextFormatFlags.NoPrefix | (wrap ? TextFormatFlags.WordBreak : TextFormatFlags.EndEllipsis));
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            bool finish = _finishRect.Contains(e.Location);
-            bool cancel = _cancelRect.Contains(e.Location);
-            if (finish != _hoverFinish || cancel != _hoverCancel)
-            {
-                _hoverFinish = finish;
-                _hoverCancel = cancel;
-                Invalidate();
-            }
-            Cursor = (finish || cancel) ? Cursors.Hand : Cursors.Default;
+            int hover = -1;
+            for (int i = 0; i < _buttons.Length; i++) if (_buttons[i].Contains(e.Location)) hover = i;
+            if (hover != _hover) { _hover = hover; Invalidate(); }
+            Cursor = hover >= 0 || _thumbRect.Contains(e.Location) || _listRect.Contains(e.Location) ? Cursors.Hand : Cursors.Default;
         }
 
-        protected override void OnMouseLeave(EventArgs e)
-        {
-            base.OnMouseLeave(e);
-            if (_hoverFinish || _hoverCancel)
-            {
-                _hoverFinish = false;
-                _hoverCancel = false;
-                Invalidate();
-            }
-            Cursor = Cursors.Default;
-        }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _hover = -1; Invalidate(); }
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
             base.OnMouseUp(e);
             if (e.Button != MouseButtons.Left) return;
-            if (_finishRect.Contains(e.Location))
+            if (_buttons[0].Contains(e.Location)) _onPause();
+            else if (_buttons[1].Contains(e.Location) && _canUndo) _onUndo();
+            else if (_buttons[2].Contains(e.Location) && _canRedo) _onRedo();
+            else if (_buttons[3].Contains(e.Location)) _onFinish();
+            else if (_buttons[4].Contains(e.Location)) _onCancel();
+            else if (_thumbRect.Contains(e.Location))
             {
-                if (_onFinish != null) _onFinish();
+                if (_full != null) { _full.Dispose(); _full = null; }
+                else { if (!_paused) _onPause(); RefreshFullPreview(); }
+                Invalidate();
             }
-            else if (_cancelRect.Contains(e.Location))
+            else if (_listRect.Contains(e.Location))
             {
-                if (_onCancel != null) _onCancel();
+                int visible = Math.Max(1, (_listRect.Height - S(28)) / S(32));
+                int first = FirstVisibleSegment(visible);
+                if (e.Y < _listRect.Y + S(26)) return;
+                int row = (e.Y - _listRect.Y - S(26)) / S(32);
+                int index = first + row;
+                if (row < 0 || index < 0 || index >= _segmentBounds.Length) return;
+                if (!_paused) _onPause();
+                _selectedSegment = index;
+                if (_full == null) RefreshFullPreview();
+                Rectangle part = _segmentBounds[index];
+                _offset = new Point(Math.Max(0, part.X - S(24)), Math.Max(0, part.Y - S(24)));
+                Invalidate();
             }
+        }
+
+        private void RefreshFullPreview()
+        {
+            Bitmap old = _full;
+            _full = _snapshot();
+            if (old != null) old.Dispose();
+            _offset = Point.Empty;
+        }
+
+        private int FirstVisibleSegment(int visible)
+        {
+            return _listStart < 0 ? Math.Max(0, _segments.Length - visible) :
+                Math.Max(0, Math.Min(Math.Max(0, _segments.Length - visible), _listStart));
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+            if (_listRect.Contains(e.Location))
+            {
+                int visible = Math.Max(1, (_listRect.Height - S(28)) / S(32));
+                _listStart = Math.Max(0, Math.Min(Math.Max(0, _segments.Length - visible),
+                    FirstVisibleSegment(visible) + (e.Delta > 0 ? -3 : 3)));
+                Invalidate(_listRect);
+                return;
+            }
+            if (_full == null) return;
+            if ((ModifierKeys & Keys.Shift) != 0)
+                _offset.X = Math.Max(0, Math.Min(Math.Max(0, _full.Width - _thumbRect.Width), _offset.X - e.Delta));
+            else _offset.Y = Math.Max(0, Math.Min(Math.Max(0, _full.Height - _thumbRect.Height), _offset.Y - e.Delta));
+            Invalidate(_thumbRect);
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                if (_titleFont != null) _titleFont.Dispose();
-                if (_hintFont != null) _hintFont.Dispose();
-                if (_progressFont != null) _progressFont.Dispose();
-                if (_smallFont != null) _smallFont.Dispose();
-                if (_buttonFont != null) _buttonFont.Dispose();
+                _titleFont.Dispose(); _font.Dispose(); _smallFont.Dispose();
+                if (_full != null) { _full.Dispose(); _full = null; }
             }
             base.Dispose(disposing);
         }

@@ -20,8 +20,8 @@ namespace XiaoJie
     }
 
     /// <summary>
-    /// 马赛克像素化底图（全屏截图的低分辨率版本放大而来），按需懒加载。
-    /// 绘制时用遮罩路径裁剪，从而实现“只马赛克笔刷覆盖区域”。
+    /// Opaque mosaic tiles that contain no screenshot information, created on demand.
+    /// The mask limits redaction to the brush stroke or selected rectangles.
     /// </summary>
     public sealed class MosaicCanvas : IDisposable
     {
@@ -34,6 +34,8 @@ namespace XiaoJie
             _source = source;
             _block = Math.Max(2, (int)Math.Round(block));
         }
+
+        public Bitmap Source { get { return _source; } }
 
         public int Block
         {
@@ -56,35 +58,41 @@ namespace XiaoJie
 
         private void Build()
         {
-            int w = Math.Max(1, _source.Width);
-            int h = Math.Max(1, _source.Height);
-            int bw = Math.Max(1, w / _block);
-            int bh = Math.Max(1, h / _block);
-            Bitmap small = new Bitmap(bw, bh, PixelFormat.Format32bppArgb);
-            using (Graphics g = Graphics.FromImage(small))
+            int width = _source.Width;
+            int height = _source.Height;
+            Bitmap pixelated = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            try
             {
-                g.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.CompositingQuality = CompositingQuality.HighQuality;
-                g.DrawImage(_source, new Rectangle(0, 0, bw, bh));
+                // Source-independent, opaque tiles prevent text silhouettes surviving redaction.
+                // Tile coordinates make repeated strokes stable without retaining screenshot colors.
+                using (Graphics graphics = Graphics.FromImage(pixelated))
+                {
+                    graphics.CompositingMode = CompositingMode.SourceCopy;
+                    for (int y = 0, row = 0; y < height; y += _block, row++)
+                    {
+                        for (int x = 0, column = 0; x < width; x += _block, column++)
+                        {
+                            uint tile = unchecked((uint)(column * 73856093) ^ (uint)(row * 19349663));
+                            int shade = 76 + (int)(tile % 6) * 12;
+                            using (SolidBrush brush = new SolidBrush(Color.FromArgb(255, shade, shade, shade)))
+                                graphics.FillRectangle(brush, x, y, _block, _block);
+                        }
+                    }
+                }
+                _pixelated = pixelated;
             }
-            _pixelated = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-            using (Graphics g = Graphics.FromImage(_pixelated))
+            catch
             {
-                g.InterpolationMode = InterpolationMode.NearestNeighbor;
-                g.PixelOffsetMode = PixelOffsetMode.Half;
-                g.CompositingQuality = CompositingQuality.HighSpeed;
-                g.DrawImage(small, new Rectangle(0, 0, w, h));
+                pixelated.Dispose();
+                throw;
             }
-            small.Dispose();
         }
-
         private void DisposePixelated()
         {
             if (_pixelated != null) { _pixelated.Dispose(); _pixelated = null; }
         }
 
-        /// <summary>在 g 上按 mask（屏幕坐标）绘制像素化画面。</summary>
+        /// <summary>Draws opaque redaction tiles through a mask in screenshot coordinates.</summary>
         public void DrawMasked(Graphics g, GraphicsPath mask)
         {
             if (mask == null || mask.PointCount == 0) return;
@@ -93,11 +101,7 @@ namespace XiaoJie
             try
             {
                 g.SetClip(mask, CombineMode.Intersect);
-                InterpolationMode oldInterp = g.InterpolationMode;
-                g.InterpolationMode = InterpolationMode.NearestNeighbor;
-                g.PixelOffsetMode = PixelOffsetMode.Half;
-                g.DrawImage(px, new Rectangle(0, 0, _source.Width, _source.Height));
-                g.InterpolationMode = oldInterp;
+                g.DrawImageUnscaled(px, 0, 0);
             }
             finally
             {
@@ -257,19 +261,47 @@ namespace XiaoJie
     /// <summary>马赛克标注：保存一个屏幕坐标的遮罩路径（笔刷轨迹或矩形）。</summary>
     public sealed class MosaicAnnotation : Annotation
     {
+        /// <summary>单个路径遮罩（笔刷轨迹 / 单个矩形）。</summary>
         public GraphicsPath Mask;
+
+        /// <summary>多个矩形遮罩（智能打码用；逐个绘制，避免复杂路径裁剪差异）。</summary>
+        public List<RectangleF> Rects;
 
         public override AnnotationType Type { get { return AnnotationType.Mosaic; } }
 
         public override void Draw(Graphics g, MosaicCanvas mosaic)
         {
-            if (Mask == null || mosaic == null) return;
+            if (mosaic == null) return;
             SetupHighQuality(g);
+            if (Rects != null && Rects.Count > 0)
+            {
+                foreach (RectangleF rect in Rects)
+                {
+                    if (rect.Width < 1f || rect.Height < 1f) continue;
+                    using (GraphicsPath path = new GraphicsPath())
+                    {
+                        path.AddRectangle(rect);
+                        mosaic.DrawMasked(g, path);
+                    }
+                }
+                return;
+            }
+            if (Mask == null) return;
             mosaic.DrawMasked(g, Mask);
         }
 
         public override RectangleF GetBounds()
         {
+            if (Rects != null && Rects.Count > 0)
+            {
+                float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, b = float.MinValue;
+                foreach (RectangleF rect in Rects)
+                {
+                    l = Math.Min(l, rect.Left); t = Math.Min(t, rect.Top);
+                    r = Math.Max(r, rect.Right); b = Math.Max(b, rect.Bottom);
+                }
+                return new RectangleF(l, t, r - l, b - t);
+            }
             if (Mask == null) return RectangleF.Empty;
             return Mask.GetBounds();
         }
@@ -324,6 +356,11 @@ namespace XiaoJie
         public PointF Location;
         public Color Color = UiTheme.Red;
         public float FontPx = 18f;
+        /// <summary>Explicit layout size after resizing; empty uses natural text metrics.</summary>
+        public SizeF LayoutSize;
+        private string _measuredText;
+        private float _measuredFontPx;
+        private SizeF _measuredSize;
 
         public override AnnotationType Type { get { return AnnotationType.Text; } }
 
@@ -336,17 +373,36 @@ namespace XiaoJie
             using (SolidBrush brush = new SolidBrush(Color))
             using (StringFormat fmt = new StringFormat(StringFormat.GenericTypographic))
             {
-                g.DrawString(Text, font, brush, Location, fmt);
+                fmt.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
+                if (LayoutSize.Width > 0 && LayoutSize.Height > 0)
+                {
+                    fmt.Trimming = StringTrimming.EllipsisCharacter;
+                    g.DrawString(Text, font, brush, new RectangleF(Location, LayoutSize), fmt);
+                }
+                else g.DrawString(Text, font, brush, Location, fmt);
             }
         }
 
         public override RectangleF GetBounds()
         {
-            using (Font font = new Font(UiTheme.UiFontName, FontPx, FontStyle.Regular, GraphicsUnit.Pixel))
+            if (LayoutSize.Width > 0 && LayoutSize.Height > 0) return new RectangleF(Location, LayoutSize);
+            string text = Text ?? "";
+            if (_measuredText != text || _measuredFontPx != FontPx)
             {
-                SizeF size = TextRenderer.MeasureText(Text ?? "", font);
-                return new RectangleF(Location.X, Location.Y, Math.Max(1f, size.Width), Math.Max(1f, size.Height));
+                // Hit testing uses the same GDI+ layout as drawing, including trailing spaces.
+                using (Bitmap surface = new Bitmap(1, 1))
+                using (Graphics graphics = Graphics.FromImage(surface))
+                using (Font font = new Font(UiTheme.UiFontName, FontPx, FontStyle.Regular, GraphicsUnit.Pixel))
+                using (StringFormat format = new StringFormat(StringFormat.GenericTypographic))
+                {
+                    graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                    format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
+                    _measuredSize = graphics.MeasureString(text.Length == 0 ? " " : text, font, new PointF(0, 0), format);
+                }
+                _measuredText = text;
+                _measuredFontPx = FontPx;
             }
+            return new RectangleF(Location, new SizeF(Math.Max(1f, _measuredSize.Width), Math.Max(1f, _measuredSize.Height)));
         }
     }
 
@@ -371,6 +427,174 @@ namespace XiaoJie
         public override RectangleF GetBounds()
         {
             return Rect;
+        }
+    }
+
+    /// <summary>原位翻译中的一行/一块译文，覆盖在原文字区域上。</summary>
+    public sealed class TranslationBlock
+    {
+        public RectangleF Rect;
+        /// <summary>The original glyph area remains covered after a manual frame adjustment.</summary>
+        public RectangleF SourceRect;
+        public string Original = "";
+        public string Translation = "";
+        public Color Background = Color.White;
+        public Color Foreground = Color.Black;
+        public float FontPx = 14f;
+    }
+
+    /// <summary>原位翻译结果（一次性覆盖多行，单次撤销）。</summary>
+    public sealed class TranslationOverlayAnnotation : Annotation
+    {
+        public List<TranslationBlock> Blocks = new List<TranslationBlock>();
+        public bool ShowOriginal;
+
+        public override AnnotationType Type { get { return AnnotationType.Text; } }
+
+        public override void Draw(Graphics g, MosaicCanvas mosaic)
+        {
+            if (ShowOriginal || Blocks == null || Blocks.Count == 0) return;
+            SetupHighQuality(g);
+            // Cover original glyphs before drawing any translated block; their destination
+            // frames can overlap only after an explicit user adjustment.
+            foreach (TranslationBlock block in Blocks)
+            {
+                if (block == null || block.SourceRect.Width <= 0 || block.SourceRect.Height <= 0) continue;
+                using (SolidBrush background = new SolidBrush(block.Background)) g.FillRectangle(background, block.SourceRect);
+            }
+            foreach (TranslationBlock block in Blocks)
+            {
+                if (block == null || block.Rect.Width < 4f || block.Rect.Height < 4f) continue;
+                RectangleF rect = block.Rect;
+                using (GraphicsPath path = ImageUtil.RoundedRect(rect, Math.Min(4f, rect.Height * 0.18f)))
+                using (SolidBrush bg = new SolidBrush(block.Background))
+                    g.FillPath(bg, path);
+                string text = block.Translation ?? "";
+                if (text.Length == 0) continue;
+                DrawFittedText(g, block);
+            }
+        }
+
+        private const float MinimumTranslationFontPx = 9f;
+
+        private sealed class TextLayout
+        {
+            internal string Text;
+            internal RectangleF Rect;
+            internal float PreferredPx;
+            internal float FontPx;
+            internal bool SingleLine;
+            internal bool Overflow;
+        }
+
+        private readonly Dictionary<TranslationBlock, TextLayout> _layouts = new Dictionary<TranslationBlock, TextLayout>();
+
+        /// <summary>Reports overflow so the editor can expose the complete translation separately.</summary>
+        internal bool HasOverflow()
+        {
+            if (Blocks == null) return false;
+            using (Bitmap surface = new Bitmap(1, 1))
+            using (Graphics graphics = Graphics.FromImage(surface))
+            {
+                foreach (TranslationBlock block in Blocks)
+                {
+                    if (block == null || string.IsNullOrEmpty(block.Translation)) continue;
+                    if (GetLayout(graphics, block).Overflow) return true;
+                }
+            }
+            return false;
+        }
+
+        private TextLayout GetLayout(Graphics graphics, TranslationBlock block)
+        {
+            TextLayout layout;
+            string text = block.Translation ?? "";
+            if (_layouts.TryGetValue(block, out layout) && layout.Text == text &&
+                layout.Rect == block.Rect && layout.PreferredPx == block.FontPx) return layout;
+
+            layout = new TextLayout { Text = text, Rect = block.Rect, PreferredPx = block.FontPx };
+            RectangleF inner = TextArea(block.Rect);
+            float preferred = Math.Max(MinimumTranslationFontPx, Math.Min(36f, block.FontPx));
+            for (int mode = 0; mode < 2; mode++)
+            {
+                bool singleLine = mode == 0;
+                int steps = (int)Math.Ceiling((preferred - MinimumTranslationFontPx) / 0.5f);
+                for (int step = 0; step <= steps; step++)
+                {
+                    float size = Math.Max(MinimumTranslationFontPx, preferred - step * 0.5f);
+                    using (Font font = new Font(UiTheme.UiFontName, size, FontStyle.Regular, GraphicsUnit.Pixel))
+                    using (StringFormat format = new StringFormat())
+                    {
+                        format.FormatFlags = singleLine ? StringFormatFlags.NoWrap : 0;
+                        format.Trimming = StringTrimming.None;
+                        int characters;
+                        int lines;
+                        SizeF measured = graphics.MeasureString(text, font,
+                            new SizeF(singleLine ? 1000000f : Math.Max(1f, inner.Width), 1000000f),
+                            format, out characters, out lines);
+                        if (characters != text.Length || (singleLine && lines > 1) ||
+                            measured.Width > inner.Width || measured.Height > inner.Height) continue;
+                        layout.FontPx = size;
+                        layout.SingleLine = singleLine;
+                        _layouts[block] = layout;
+                        return layout;
+                    }
+                }
+            }
+            layout.FontPx = MinimumTranslationFontPx;
+            layout.SingleLine = true;
+            layout.Overflow = true;
+            _layouts[block] = layout;
+            return layout;
+        }
+
+        private static RectangleF TextArea(RectangleF rect)
+        {
+            float padding = Math.Max(1f, Math.Min(3f, rect.Height * 0.08f));
+            return new RectangleF(rect.X + padding, rect.Y + padding,
+                Math.Max(0f, rect.Width - padding * 2), Math.Max(0f, rect.Height - padding * 2));
+        }
+
+        private void DrawFittedText(Graphics graphics, TranslationBlock block)
+        {
+            TextLayout layout = GetLayout(graphics, block);
+            RectangleF inner = TextArea(block.Rect);
+            GraphicsState state = graphics.Save();
+            try
+            {
+                graphics.SetClip(block.Rect, CombineMode.Intersect);
+                graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                float fontSize = Math.Max(8f, layout.FontPx);
+                using (Font font = new Font(UiTheme.UiFontName, fontSize, FontStyle.Regular, GraphicsUnit.Pixel))
+                using (SolidBrush brush = new SolidBrush(block.Foreground))
+                using (StringFormat format = new StringFormat())
+                {
+                    format.Alignment = StringAlignment.Near;
+                    format.LineAlignment = StringAlignment.Center;
+                    format.FormatFlags = layout.SingleLine ? StringFormatFlags.NoWrap : 0;
+                    format.Trimming = StringTrimming.EllipsisCharacter;
+                    graphics.DrawString(layout.Text, font, brush, inner, format);
+                }
+            }
+            finally
+            {
+                graphics.Restore(state);
+            }
+        }
+        public override RectangleF GetBounds()
+        {
+            if (Blocks == null || Blocks.Count == 0) return RectangleF.Empty;
+            float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, b = float.MinValue;
+            foreach (TranslationBlock block in Blocks)
+            {
+                if (block == null) continue;
+                l = Math.Min(l, block.Rect.Left);
+                t = Math.Min(t, block.Rect.Top);
+                r = Math.Max(r, block.Rect.Right);
+                b = Math.Max(b, block.Rect.Bottom);
+            }
+            if (l == float.MaxValue) return RectangleF.Empty;
+            return new RectangleF(l, t, r - l, b - t);
         }
     }
 
@@ -404,5 +628,5 @@ namespace XiaoJie
             return new RectangleF(Center.X - Radius, Center.Y - Radius, Radius * 2, Radius * 2);
         }
     }
-}
 
+}

@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace XiaoJie
@@ -16,32 +17,49 @@ namespace XiaoJie
         private readonly bool _topMost;
         private float _zoom = 1f;
         private bool _dragging;
+        private bool _resizing;
         private Point _dragStartScreen;
         private Point _startLocation;
+        private float _resizeStartZoom;
         private ContextMenuStrip _menu;
+        private bool _closeHover;
+        private float _scale;
+        private bool _rescaling;
+        private Bitmap _zoomedImage;
+        private Rectangle _zoomedImageBounds;
+        private bool _zoomCacheUnavailable;
 
         public PinForm(Bitmap image, Rectangle screenBounds, bool alwaysOnTop)
         {
+            if (image == null) throw new ArgumentNullException("image");
             _image = image;
             _topMost = alwaysOnTop;
+            Point target = screenBounds.IsEmpty ? Cursor.Position :
+                new Point(screenBounds.X + screenBounds.Width / 2, screenBounds.Y + screenBounds.Height / 2);
+            _scale = DpiUtil.ScaleAtPoint(target);
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
             TopMost = alwaysOnTop;
+            AutoScaleMode = AutoScaleMode.None;
             DoubleBuffered = true;
             KeyPreview = true;
             BackColor = Color.FromArgb(24, 24, 24);
             Text = "钉在桌面";
-            int maxW = Math.Max(120, DpiUtil.VirtualScreen.Width - 20);
-            int maxH = Math.Max(120, DpiUtil.VirtualScreen.Height - 20);
+            AccessibleName = "钉图";
+            AccessibleDescription = "拖动移动，滚轮缩放，右上角关闭或按 Esc 关闭";
+            SetStyle(ControlStyles.ResizeRedraw, true);
+            Rectangle workingArea = Screen.FromPoint(target).WorkingArea;
+            int maxW = Math.Max(120, workingArea.Width - 20 - BorderWidth * 2);
+            int maxH = Math.Max(120, workingArea.Height - 20 - HeaderHeight - BorderWidth * 2);
             if (screenBounds.Width <= 0) screenBounds = new Rectangle(120, 120, Math.Min(_image.Width, maxW), Math.Min(_image.Height, maxH));
             _zoom = 1f;
             Size size = new Size(Math.Min(_image.Width, maxW), Math.Min(_image.Height, maxH));
             if (size.Width < _image.Width || size.Height < _image.Height)
                 _zoom = Math.Min((float)size.Width / _image.Width, (float)size.Height / _image.Height);
-            Bounds = new Rectangle(screenBounds.X, screenBounds.Y,
-                Math.Max(20, (int)Math.Round(_image.Width * _zoom)),
-                Math.Max(20, (int)Math.Round(_image.Height * _zoom)));
+            ClientSize = SizeForZoom(_zoom);
+            Location = new Point(screenBounds.X - ImageBounds().X, screenBounds.Y - ImageBounds().Y);
+            KeepCloseButtonVisible();
             BuildMenu();
         }
 
@@ -73,6 +91,15 @@ namespace XiaoJie
             ToolStripMenuItem reset = new ToolStripMenuItem("恢复 100% 大小");
             reset.Click += delegate { SetZoomFromCenter(1f); };
             _menu.Items.Add(reset);
+            ToolStripMenuItem scaleMenu = new ToolStripMenuItem("缩放比例");
+            foreach (int percent in new[] { 50, 75, 100, 125, 150, 200 })
+            {
+                int selected = percent;
+                ToolStripMenuItem item = new ToolStripMenuItem(selected + "%");
+                item.Click += delegate { SetZoomFromCenter(selected / 100f); };
+                scaleMenu.DropDownItems.Add(item);
+            }
+            _menu.Items.Add(scaleMenu);
             _menu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem close = new ToolStripMenuItem("关闭");
             close.Click += delegate { Close(); };
@@ -97,7 +124,7 @@ namespace XiaoJie
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show(this, "保存失败：" + ex.Message, "微信截图助手", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show(this, "保存失败：" + ex.Message, "截图助手", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
             }
@@ -106,19 +133,160 @@ namespace XiaoJie
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            g.DrawImage(_image, new Rectangle(0, 0, ClientSize.Width, ClientSize.Height));
-            using (Pen pen = new Pen(Color.FromArgb(160, 255, 255, 255)))
-                g.DrawRectangle(pen, 0.5f, 0.5f, ClientSize.Width - 1f, ClientSize.Height - 1f);
+            g.Clear(BackColor);
+            Rectangle imageBounds = ImageBounds();
+            if (_zoom == 1f) g.DrawImageUnscaled(_image, imageBounds.Location);
+            else
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                DrawZoomedImage(g, imageBounds);
+            }
+            using (Pen outline = new Pen(Color.FromArgb(20, 20, 20)))
+                g.DrawRectangle(outline, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
+            using (Pen border = new Pen(UiTheme.Green, Math.Max(1f, _scale)))
+                g.DrawRectangle(border, 1, 1, ClientSize.Width - 3, ClientSize.Height - 3);
+
+            // Keep controls outside the image so copying and inspecting use the same content.
+            Rectangle closeRect = CloseButtonRect();
+            Rectangle titleRect = new Rectangle(BorderWidth + 8, BorderWidth,
+                Math.Max(1, closeRect.Left - BorderWidth - 12), HeaderHeight);
+            using (Font font = new Font(UiTheme.UiFontName, 11f * _scale, FontStyle.Regular, GraphicsUnit.Pixel))
+                TextRenderer.DrawText(g, "钉图 · " + Math.Round(_zoom * 100) + "%", font, titleRect, Color.White,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(closeRect.X, closeRect.Y, closeRect.Width, closeRect.Height), closeRect.Width / 2f))
+            using (SolidBrush bg = new SolidBrush(_closeHover ? UiTheme.ActionRed : Color.FromArgb(64, 64, 64)))
+                g.FillPath(bg, path);
+            using (Pen pen = new Pen(Color.White, Math.Max(1.6f, 2f * _scale)))
+            {
+                float px = closeRect.X + closeRect.Width * 0.3f;
+                float py = closeRect.Y + closeRect.Height * 0.3f;
+                float ex = closeRect.Right - closeRect.Width * 0.3f;
+                float ey = closeRect.Bottom - closeRect.Height * 0.3f;
+                g.DrawLine(pen, px, py, ex, ey);
+                g.DrawLine(pen, ex, py, px, ey);
+            }
+            DrawResizeGrip(g);
+        }
+
+        private Rectangle ResizeGripRect()
+        {
+            int size = Math.Max(14, (int)Math.Round(18 * _scale));
+            return new Rectangle(ClientSize.Width - size - BorderWidth, ClientSize.Height - size - BorderWidth, size, size);
+        }
+
+        private void DrawResizeGrip(Graphics graphics)
+        {
+            Rectangle grip = ResizeGripRect();
+            using (Pen pen = new Pen(Color.FromArgb(220, 255, 255, 255), Math.Max(1f, _scale)))
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    int inset = (int)Math.Round((i + 1) * 4 * _scale);
+                    graphics.DrawLine(pen, grip.Right - inset, grip.Bottom - 2,
+                        grip.Right - 2, grip.Bottom - inset);
+                }
+            }
+        }
+
+        private Rectangle CloseButtonRect()
+        {
+            int size = (int)Math.Round(22 * _scale);
+            return new Rectangle(ClientSize.Width - size - BorderWidth - (int)Math.Round(4 * _scale),
+                BorderWidth + (HeaderHeight - size) / 2, size, size);
+        }
+
+        private int BorderWidth { get { return Math.Max(2, (int)Math.Round(2 * _scale)); } }
+        private int HeaderHeight { get { return Math.Max(28, (int)Math.Round(30 * _scale)); } }
+        private int GripFooterHeight { get { return Math.Max(18, (int)Math.Round(20 * _scale)); } }
+
+        private Size SizeForZoom(float zoom)
+        {
+            return new Size(Math.Max((int)Math.Round(120 * _scale), (int)Math.Round(_image.Width * zoom)) + BorderWidth * 2,
+                Math.Max(1, (int)Math.Round(_image.Height * zoom)) + HeaderHeight + GripFooterHeight + BorderWidth * 2);
+        }
+
+        private Rectangle ImageBounds()
+        {
+            int width = Math.Max(1, (int)Math.Round(_image.Width * _zoom));
+            int height = Math.Max(1, (int)Math.Round(_image.Height * _zoom));
+            return new Rectangle((ClientSize.Width - width) / 2, BorderWidth + HeaderHeight, width, height);
+        }
+
+        private void KeepCloseButtonVisible()
+        {
+            Rectangle workArea = Screen.FromRectangle(Bounds).WorkingArea;
+            Rectangle close = CloseButtonRect();
+            int margin = Math.Max(4, BorderWidth);
+            int x = Math.Max(workArea.Left + margin - close.Left,
+                Math.Min(workArea.Right - margin - close.Right, Left));
+            int y = Math.Max(workArea.Top + margin,
+                Math.Min(workArea.Bottom - margin - HeaderHeight - BorderWidth, Top));
+            Location = new Point(x, y);
+        }
+
+        private void UpdateMonitorScale(float monitorScale)
+        {
+            if (_rescaling || _image == null || monitorScale < 0.75f || monitorScale > 5f ||
+                Math.Abs(monitorScale - _scale) < 0.01f) return;
+            _rescaling = true;
+            try
+            {
+                Rectangle before = ImageBounds();
+                Point imageOrigin = new Point(Left + before.X, Top + before.Y);
+                Point oldLocation = Location;
+                // DPI 只改变边框和关闭控件；钉图的 zoom 和像素尺寸保持一致。
+                _scale = monitorScale;
+                ClientSize = SizeForZoom(_zoom);
+                Rectangle after = ImageBounds();
+                Location = new Point(imageOrigin.X - after.X, imageOrigin.Y - after.Y);
+                KeepCloseButtonVisible();
+                if (_dragging) _startLocation.Offset(Left - oldLocation.X, Top - oldLocation.Y);
+                Invalidate();
+            }
+            finally { _rescaling = false; }
+        }
+
+        protected override void OnLocationChanged(EventArgs e)
+        {
+            base.OnLocationChanged(e);
+            if (_image != null && !_rescaling && IsHandleCreated)
+                UpdateMonitorScale(DpiUtil.ScaleAtPoint(new Point(Left + Width / 2, Top + HeaderHeight / 2)));
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x02E0)
+            {
+                // 不接受系统按 DPI 放大的截图；图片位置由物理像素契约维持。
+                UpdateMonitorScale((m.WParam.ToInt64() & 0xffff) / 96f);
+                m.Result = IntPtr.Zero;
+                return;
+            }
+            base.WndProc(ref m);
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left && CloseButtonRect().Contains(e.Location))
+            {
+                Close();
+                return;
+            }
+            if (e.Button == MouseButtons.Left && ResizeGripRect().Contains(e.Location))
+            {
+                _resizing = true;
+                Capture = true;
+                _dragStartScreen = Cursor.Position;
+                _resizeStartZoom = _zoom;
+                Activate();
+                return;
+            }
             if (e.Button == MouseButtons.Left)
             {
                 _dragging = true;
+                Capture = true;
                 _dragStartScreen = Cursor.Position;
                 _startLocation = Location;
                 Activate();
@@ -132,6 +300,27 @@ namespace XiaoJie
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (_resizing)
+            {
+                Point resizeNow = Cursor.Position;
+                int dx = resizeNow.X - _dragStartScreen.X;
+                int dy = resizeNow.Y - _dragStartScreen.Y;
+                Rectangle image = ImageBounds();
+                float widthZoom = (_image.Width <= 0) ? _resizeStartZoom : (image.Width + dx) / (float)_image.Width;
+                float heightZoom = (_image.Height <= 0) ? _resizeStartZoom : (image.Height + dy) / (float)_image.Height;
+                float zoom = Math.Max(0.1f, Math.Min(4f, Math.Max(widthZoom, heightZoom)));
+                SetZoom(zoom, new Point(Left + image.Left, Top + image.Top));
+                Cursor = Cursors.SizeNWSE;
+                return;
+            }
+            bool hover = CloseButtonRect().Contains(e.Location);
+            if (hover != _closeHover)
+            {
+                _closeHover = hover;
+                Cursor = hover ? Cursors.Hand : Cursors.Default;
+                Invalidate(CloseButtonRect());
+            }
+            if (ResizeGripRect().Contains(e.Location)) Cursor = Cursors.SizeNWSE;
             if (!_dragging) return;
             Point now = Cursor.Position;
             Location = new Point(_startLocation.X + now.X - _dragStartScreen.X, _startLocation.Y + now.Y - _dragStartScreen.Y);
@@ -141,6 +330,21 @@ namespace XiaoJie
         {
             base.OnMouseUp(e);
             _dragging = false;
+            _resizing = false;
+            Capture = false;
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (!Capture) _dragging = false;
+            if (!Capture) _resizing = false;
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (_closeHover) { _closeHover = false; Cursor = Cursors.Default; Invalidate(CloseButtonRect()); }
         }
 
         protected override void OnMouseDoubleClick(MouseEventArgs e)
@@ -168,14 +372,16 @@ namespace XiaoJie
             if (_image.Width <= 0 || _image.Height <= 0) return;
             float oldZoom = _zoom;
             if (oldZoom <= 0) oldZoom = 1f;
-            float localX = (anchorScreen.X - Left) / oldZoom;
-            float localY = (anchorScreen.Y - Top) / oldZoom;
+            Rectangle oldImage = ImageBounds();
+            float localX = (anchorScreen.X - Left - oldImage.X) / oldZoom;
+            float localY = (anchorScreen.Y - Top - oldImage.Y) / oldZoom;
             _zoom = Math.Max(0.1f, Math.Min(4f, zoom));
-            int w = Math.Max(20, (int)Math.Round(_image.Width * _zoom));
-            int h = Math.Max(20, (int)Math.Round(_image.Height * _zoom));
-            int x = anchorScreen.X - (int)Math.Round(localX * _zoom);
-            int y = anchorScreen.Y - (int)Math.Round(localY * _zoom);
-            Bounds = new Rectangle(x, y, w, h);
+            if (_zoom != oldZoom) DisposeZoomedImage();
+            ClientSize = SizeForZoom(_zoom);
+            Rectangle newImage = ImageBounds();
+            Location = new Point(anchorScreen.X - newImage.X - (int)Math.Round(localX * _zoom),
+                anchorScreen.Y - newImage.Y - (int)Math.Round(localY * _zoom));
+            KeepCloseButtonVisible();
             Invalidate();
         }
 
@@ -185,11 +391,69 @@ namespace XiaoJie
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
-        protected override void OnFormClosed(FormClosedEventArgs e)
+        private void DrawZoomedImage(Graphics graphics, Rectangle imageBounds)
         {
-            if (_menu != null) { _menu.Dispose(); _menu = null; }
-            if (_image != null) { try { _image.Dispose(); } catch { } }
-            base.OnFormClosed(e);
+            if (_zoomCacheUnavailable)
+            {
+                graphics.DrawImage(_image, imageBounds);
+                return;
+            }
+            if (_zoomedImage == null || _zoomedImage.Size != ClientSize || _zoomedImageBounds != imageBounds)
+            {
+                DisposeZoomedImage();
+                // The source image is immutable. Preserve the same interpolation,
+                // but reuse its result during moves, hover, and expose repainting.
+                Bitmap scaled = null;
+                try
+                {
+                    scaled = new Bitmap(ClientSize.Width, ClientSize.Height, PixelFormat.Format32bppPArgb);
+                    using (Graphics cache = Graphics.FromImage(scaled))
+                    {
+                        cache.Clear(BackColor);
+                        cache.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        cache.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        cache.DrawImage(_image, imageBounds);
+                    }
+                    _zoomedImage = scaled;
+                    _zoomedImageBounds = imageBounds;
+                }
+                catch (OutOfMemoryException)
+                {
+                    if (scaled != null) scaled.Dispose();
+                    _zoomCacheUnavailable = true;
+                }
+                catch (ExternalException)
+                {
+                    if (scaled != null) scaled.Dispose();
+                    _zoomCacheUnavailable = true;
+                }
+                catch
+                {
+                    if (scaled != null) scaled.Dispose();
+                    throw;
+                }
+            }
+            if (_zoomedImage != null) graphics.DrawImageUnscaled(_zoomedImage, Point.Empty);
+            else graphics.DrawImage(_image, imageBounds);
+        }
+
+        private void DisposeZoomedImage()
+        {
+            _zoomCacheUnavailable = false;
+            if (_zoomedImage == null) return;
+            _zoomedImage.Dispose();
+            _zoomedImage = null;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                DisposeZoomedImage();
+                if (_menu != null) { _menu.Font.Dispose(); _menu.Dispose(); _menu = null; }
+                if (_image != null) _image.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 
@@ -292,7 +556,7 @@ namespace XiaoJie
                     }
                     catch (Exception ex)
                     {
-                        MessageBox.Show(this, "保存失败：" + ex.Message, "微信截图助手", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        MessageBox.Show(this, "保存失败：" + ex.Message, "截图助手", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
             }

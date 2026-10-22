@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>longshot-regression</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Compile Include="longshot-regression.cs" />
+    <Compile Include="..\src\LongShot.cs" Link="LongShot.cs" />
+    <Compile Include="..\src\LongShotStitcher.cs" Link="LongShotStitcher.cs" />
+    <Compile Include="..\src\Util.cs" Link="Util.cs" />
+  </ItemGroup>
+</Project>

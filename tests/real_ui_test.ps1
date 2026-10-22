@@ -8,11 +8,11 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 . (Join-Path $root 'tools\ui_probe.ps1')
-if (-not $Exe) { $Exe = Join-Path $root 'build_lead\微信截图助手.exe' }
+if (-not $Exe) { $Exe = Join-Path $root 'build_lead\截图助手.exe' }
 if (-not (Test-Path $Exe)) { throw "找不到 exe: $Exe" }
 $out = Join-Path $root $OutDir
 New-Item -ItemType Directory -Force $out | Out-Null
-Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
 
 # 准备测试配置（mock API + 保存到 tests\real\shots；API Key 用 DPAPI 加密写入，与 ConfigStore 一致）
@@ -31,7 +31,7 @@ $cfg = @{
     StartWithWindows = $false; FirstRunDone = $true
 } | ConvertTo-Json -Depth 5
 Set-Content -Encoding UTF8 (Join-Path $exeDir 'config.json') $cfg
-Remove-Item (Join-Path $exeDir '微信截图助手.log') -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $exeDir '截图助手.log') -ErrorAction SilentlyContinue
 
 # 启动 mock 服务
 $mockLog = Join-Path $out 'mock_requests.jsonl'
@@ -67,7 +67,7 @@ try {
     Save-ScreenPng (Join-Path $out '3_ai_ocr.png')
 
     # 4) Esc 关闭 AI 面板（发送到覆盖层窗口）
-    $overlay = [UiProbe]::FindByTitle('微信截图助手 - 截图')
+    $overlay = [UiProbe]::FindByTitle('截图助手 - 截图')
     if ($overlay -ne [IntPtr]::Zero) {
         [UiProbe]::PostMessage($overlay, 0x0100, [IntPtr]27, [IntPtr]::Zero)
         [UiProbe]::PostMessage($overlay, 0x0101, [IntPtr]27, [IntPtr]::Zero)
@@ -99,6 +99,6 @@ try {
 }
 finally {
     if ($app -ne $null -and -not $app.HasExited) { $app.Kill() }
-    Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
     if (-not $mock.HasExited) { $mock.Kill() }
 }

@@ -46,6 +46,10 @@ namespace XiaoJie
         private Label _translationLabel;
         private Label _usageLabel;
         private Button _copyOcrAllBtn;
+        private Button _copyTableBtn;
+        private Button _formatBtn;
+        private string _currentFormat = "lines";
+        private LocalOcrResult _lastOcrResult;
         private Button _copyOriginalBtn;
         private Button _copyTranslationBtn;
         private Button _copyAllBtn;
@@ -104,6 +108,27 @@ namespace XiaoJie
         /// <summary>请求关闭面板（由 OverlayForm 移除并释放）。</summary>
         public event EventHandler CloseRequested;
 
+        internal string SearchableText
+        {
+            get
+            {
+                if (_lastOcrResult != null && !string.IsNullOrWhiteSpace(_lastOcrResult.Text))
+                    return _lastOcrResult.Text;
+                return _originalBox != null ? _originalBox.Text : "";
+            }
+        }
+
+        /// <summary>显示已经完成的原位翻译，不再次发起识别或联网请求。</summary>
+        internal void ShowCompletedTranslation(string original, string translation)
+        {
+            _started = true;
+            HideAllOverlays();
+            _originalBox.Text = NormalizeNewlines(original);
+            _translationBox.Text = NormalizeNewlines(translation);
+            _translationStage = true;
+            UpdateUsageLabel();
+        }
+
         // ===================== 公开方法 =====================
 
         /// <summary>开始请求（由 OverlayForm 调用一次）。</summary>
@@ -135,7 +160,7 @@ namespace XiaoJie
             _fontText = UiTheme.Font(14f * _s);
             _fontSmall = UiTheme.Font(12f * _s);
             _fontButton = UiTheme.Font(13f * _s);
-            _fontUsage = UiTheme.Font(10.5f * _s);
+            _fontUsage = UiTheme.Font(12f * _s);
 
             _closeGlyph = new AiCloseButton();
             _closeGlyph.Name = "CloseGlyph";
@@ -154,9 +179,39 @@ namespace XiaoJie
 
                 _copyOcrAllBtn = MakeButton("复制全部", true);
                 _copyOcrAllBtn.Click += delegate { CopyText(AllText()); };
+
+                _copyTableBtn = MakeButton("复制表格", false);
+                _copyTableBtn.Click += delegate
+                {
+                    if (_lastOcrResult == null) { Toast.Show("暂无可复制的内容"); return; }
+                    var res = OcrTextFormatter.Format(_lastOcrResult, "table", false);
+                    if (ClipUtil.CopyText(res.Text))
+                        Toast.Show(string.IsNullOrEmpty(res.Warning) ? "已复制表格" : res.Warning);
+                };
+
+                _formatBtn = MakeButton("合并段落", false);
+                _formatBtn.Click += delegate
+                {
+                    if (_lastOcrResult == null) return;
+                    if (_currentFormat == "lines")
+                    {
+                        _currentFormat = "paragraphs";
+                        _formatBtn.Text = "保留换行";
+                    }
+                    else
+                    {
+                        _currentFormat = "lines";
+                        _formatBtn.Text = "合并段落";
+                    }
+                    var fmt = OcrTextFormatter.Format(_lastOcrResult, _currentFormat, true);
+                    _ocrBox.Text = fmt.Text;
+                };
+
                 _closeBtn = MakeButton("关闭", false);
                 _closeBtn.Click += OnCloseClicked;
                 Controls.Add(_copyOcrAllBtn);
+                Controls.Add(_copyTableBtn);
+                Controls.Add(_formatBtn);
                 Controls.Add(_closeBtn);
             }
             else
@@ -233,12 +288,12 @@ namespace XiaoJie
             button.Text = text;
             button.FlatStyle = FlatStyle.Flat;
             button.Font = _fontButton;
-            button.BackColor = primary ? UiTheme.Green : Color.White;
-            button.ForeColor = primary ? Color.White : UiTheme.TextDark;
+            button.BackColor = primary ? UiTheme.Signal : Color.White;
+            button.ForeColor = primary ? UiTheme.SignalText : UiTheme.TextDark;
             button.FlatAppearance.BorderSize = primary ? 0 : 1;
-            button.FlatAppearance.BorderColor = UiTheme.ToolbarBorder;
-            button.FlatAppearance.MouseOverBackColor = primary ? UiTheme.GreenDark : UiTheme.HoverBg;
-            button.FlatAppearance.MouseDownBackColor = primary ? UiTheme.GreenDark : Color.FromArgb(232, 232, 232);
+            button.FlatAppearance.BorderColor = primary ? UiTheme.Signal : SettingsColors.InputBorder;
+            button.FlatAppearance.MouseOverBackColor = primary ? UiTheme.ConfirmBgHover : UiTheme.HoverBg;
+            button.FlatAppearance.MouseDownBackColor = primary ? SettingsColors.GreenPressed : SettingsColors.PressedBg;
             button.UseVisualStyleBackColor = false;
             button.Cursor = Cursors.Hand;
             button.TabStop = true;
@@ -317,12 +372,18 @@ namespace XiaoJie
             int x = margin;
             if (_mode == AiPanelMode.Ocr)
             {
-                int w1 = (int)Math.Round(96 * _s);
-                int w2 = (int)Math.Round(72 * _s);
+                int w1 = (int)Math.Round(80 * _s);
+                int w2 = (int)Math.Round(80 * _s);
+                int w3 = (int)Math.Round(80 * _s);
+                int w4 = (int)Math.Round(60 * _s);
                 _copyOcrAllBtn.Bounds = new Rectangle(x, btnY, w1, btnH);
                 x += w1 + gap;
-                _closeBtn.Bounds = new Rectangle(x, btnY, w2, btnH);
-                x += w2;
+                _copyTableBtn.Bounds = new Rectangle(x, btnY, w2, btnH);
+                x += w2 + gap;
+                _formatBtn.Bounds = new Rectangle(x, btnY, w3, btnH);
+                x += w3 + gap;
+                _closeBtn.Bounds = new Rectangle(x, btnY, w4, btnH);
+                x += w4;
             }
             else
             {
@@ -353,7 +414,7 @@ namespace XiaoJie
         {
             if (Width <= 0 || Height <= 0) return;
             Region old = _roundRegion;
-            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(0, 0, Width, Height), 12f * _s))
+            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(0, 0, Width, Height), 16f * _s))
                 _roundRegion = new Region(path);
             Region = _roundRegion;
             if (old != null)
@@ -385,14 +446,14 @@ namespace XiaoJie
                 ShowError("AI 面板初始化失败：缺少图片或客户端，请重试。");
                 return;
             }
-            if (!_client.HasApiKey)
+            if (_mode != AiPanelMode.Ocr && !_client.HasApiKey)
             {
-                ShowError("尚未配置 DeepSeek API Key。请点击托盘图标 →「设置…」，在「AI 设置」中填写 API Key 后再试。");
+                ShowError("尚未配置 API Key。请在托盘图标 →「设置…」→「API 与翻译」中填写所用接口的 Key 后再试。");
                 return;
             }
 
-            if (_mode == AiPanelMode.Ocr) ShowLoading(_ocrLoading, "正在识别…");
-            else ShowLoading(_originalLoading, "正在识别…");
+            if (_mode == AiPanelMode.Ocr) ShowLoading(_ocrLoading, "正在本地识别…");
+            else ShowLoading(_originalLoading, "正在本地识别…");
 
             CancellationTokenSource cts = new CancellationTokenSource();
             _cts = cts;
@@ -406,10 +467,11 @@ namespace XiaoJie
             {
                 if (_mode == AiPanelMode.Ocr)
                 {
-                    await _client.OcrAsync(_aiImage,
+                    var ocrRes = await _client.OcrResultAsync(_aiImage,
                         piece => PostUi(() => AppendTextToOcr(piece)),
                         usage => PostUi(() => OnUsageReceived(usage, false)),
                         ct).ConfigureAwait(false);
+                    PostUi(() => { _lastOcrResult = ocrRes; });
                 }
                 else
                 {
@@ -684,10 +746,10 @@ namespace XiaoJie
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             using (Pen border = new Pen(UiTheme.ToolbarBorder, 1f))
-            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 12f * _s))
+            using (GraphicsPath path = ImageUtil.RoundedRect(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 16f * _s))
                 g.DrawPath(border, path);
 
-            using (Pen separator = new Pen(Color.FromArgb(240, 240, 240), 1f))
+            using (Pen separator = new Pen(SettingsColors.Divider, 1f))
             {
                 g.DrawLine(separator, _margin, _titleH + 0.5f, Width - _margin, _titleH + 0.5f);
                 g.DrawLine(separator, 0, Height - _bottomH + 0.5f, Width, Height - _bottomH + 0.5f);
@@ -695,11 +757,11 @@ namespace XiaoJie
 
             int iconSize = (int)Math.Round(22 * _s);
             Rectangle iconRect = new Rectangle(_margin, (_titleH - iconSize) / 2, iconSize, iconSize);
-            using (GraphicsPath iconPath = ImageUtil.RoundedRect(iconRect, 6f * _s))
-            using (SolidBrush brush = new SolidBrush(UiTheme.Green))
+            using (GraphicsPath iconPath = ImageUtil.RoundedRect(iconRect, 2f * _s))
+            using (SolidBrush brush = new SolidBrush(UiTheme.Signal))
                 g.FillPath(brush, iconPath);
             string glyph = _mode == AiPanelMode.Ocr ? "文" : "译";
-            TextRenderer.DrawText(g, glyph, _fontIcon, iconRect, Color.White,
+            TextRenderer.DrawText(g, glyph, _fontIcon, iconRect, UiTheme.SignalText,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 
             int titleX = iconRect.Right + (int)Math.Round(10 * _s);
@@ -722,7 +784,7 @@ namespace XiaoJie
         private static void DrawTextBorder(Graphics g, Rectangle rect)
         {
             if (rect.Width <= 0 || rect.Height <= 0) return;
-            using (Pen pen = new Pen(UiTheme.ToolbarBorder, 1f))
+            using (Pen pen = new Pen(SettingsColors.InputBorder, 1f))
                 g.DrawRectangle(pen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
         }
 
@@ -915,7 +977,7 @@ namespace XiaoJie
             _messageLabel = new Label();
             _messageLabel.AutoSize = false;
             _messageLabel.TextAlign = ContentAlignment.MiddleCenter;
-            _messageLabel.ForeColor = UiTheme.Red;
+            _messageLabel.ForeColor = UiTheme.ActionRed;
             _messageLabel.BackColor = Color.White;
             _messageLabel.Font = _messageFont;
             _messageLabel.Text = "";
@@ -927,7 +989,7 @@ namespace XiaoJie
             _retryBtn.Font = _buttonFont;
             _retryBtn.Size = new Size((int)Math.Round(86 * _scale), (int)Math.Round(32 * _scale));
             _retryBtn.BackColor = Color.White;
-            _retryBtn.ForeColor = UiTheme.GreenDark;
+            _retryBtn.ForeColor = UiTheme.ActionGreen;
             _retryBtn.FlatAppearance.BorderSize = 1;
             _retryBtn.FlatAppearance.BorderColor = UiTheme.Green;
             _retryBtn.FlatAppearance.MouseOverBackColor = UiTheme.GreenLight;

@@ -4,11 +4,124 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
 namespace XiaoJie
 {
+    /// <summary>保留本次长截图原帧，以便无损撤回或恢复末段；只存在于内存。</summary>
+    internal sealed class LongShotJournal : IDisposable
+    {
+        private readonly int _width;
+        private readonly long _budget;
+        private readonly List<byte[]> _frames = new List<byte[]>();
+        private readonly List<Size> _sizes = new List<Size>();
+        private readonly List<bool> _prepend = new List<bool>();
+        private long _bytes;
+        private int _position;
+        public LongShotStitcher Stitcher { get; private set; }
+        public bool HistoryFull { get; private set; }
+        public int Count { get { return _position; } }
+        public bool CanUndo { get { return _position > 1; } }
+        public bool CanRedo { get { return _position < _frames.Count; } }
+
+        public LongShotJournal(int width, long budget = 128L * 1024 * 1024)
+        {
+            _width = width;
+            _budget = Math.Max(1, budget);
+            Stitcher = new LongShotStitcher(width);
+        }
+
+        public Size[] SegmentSizes()
+        {
+            Size[] result = new Size[_position];
+            for (int i = 0; i < result.Length; i++) result[i] = _sizes[i];
+            return result;
+        }
+
+        public Rectangle[] SegmentBounds()
+        {
+            Rectangle[] result = new Rectangle[_position];
+            if (_position == 0) return result;
+            result[0] = new Rectangle(Point.Empty, _sizes[0]);
+            for (int i = 1; i < _position; i++)
+            {
+                int dx = _sizes[i].Width - _sizes[i - 1].Width;
+                int dy = _sizes[i].Height - _sizes[i - 1].Height;
+                if (_prepend[i])
+                {
+                    for (int j = 0; j < i; j++) result[j].Offset(dx, dy);
+                    result[i] = new Rectangle(0, 0, dx > 0 ? dx : _sizes[i].Width, dy > 0 ? dy : _sizes[i].Height);
+                }
+                else result[i] = dx > 0
+                    ? new Rectangle(_sizes[i - 1].Width, 0, dx, _sizes[i].Height)
+                    : new Rectangle(0, _sizes[i - 1].Height, _sizes[i].Width, dy);
+            }
+            return result;
+        }
+
+        public bool AddFrame(Bitmap frame)
+        {
+            if (frame == null) return false;
+            byte[] png;
+            using (MemoryStream stream = new MemoryStream()) { frame.Save(stream, ImageFormat.Png); png = stream.ToArray(); }
+            long activeBytes = _bytes;
+            for (int i = _position; i < _frames.Count; i++) activeBytes -= _frames[i].Length;
+            HistoryFull = png.LongLength + activeBytes > _budget;
+            if (HistoryFull) return false;
+            if (!Stitcher.AddFrame(frame)) return false;
+            for (int i = _frames.Count - 1; i >= _position; i--)
+            {
+                _bytes -= _frames[i].Length;
+                Array.Clear(_frames[i], 0, _frames[i].Length);
+                _frames.RemoveAt(i);
+                _sizes.RemoveAt(i);
+                _prepend.RemoveAt(i);
+            }
+            _frames.Add(png);
+            _sizes.Add(Stitcher.ResultSize);
+            _prepend.Add(Stitcher.LastAddedAtStart);
+            _bytes += png.Length;
+            _position++;
+            return true;
+        }
+
+        public bool Undo() { return CanUndo && Replay(_position - 1); }
+        public bool Redo() { return CanRedo && Replay(_position + 1); }
+
+        private bool Replay(int count)
+        {
+            LongShotStitcher restored = new LongShotStitcher(_width);
+            try
+            {
+                for (int i = 0; i < count; i++)
+                    using (MemoryStream stream = new MemoryStream(_frames[i], false))
+                    using (Bitmap image = new Bitmap(stream))
+                        if (!restored.AddFrame(image)) return false;
+                LongShotStitcher old = Stitcher;
+                Stitcher = restored;
+                restored = null;
+                old.Dispose();
+                _position = count;
+                HistoryFull = false;
+                return true;
+            }
+            finally { if (restored != null) restored.Dispose(); }
+        }
+
+        public void Dispose()
+        {
+            if (Stitcher != null) { Stitcher.Dispose(); Stitcher = null; }
+            foreach (byte[] frame in _frames) Array.Clear(frame, 0, frame.Length);
+            _frames.Clear();
+            _sizes.Clear();
+            _prepend.Clear();
+            _position = 0;
+            _bytes = 0;
+        }
+    }
+
     /// <summary>
     /// 滚动内容拼接器（长截图核心算法，可独立单测）。
     /// 用法：new LongShotStitcher(regionWidth) → 逐帧 AddFrame(frame) → TakeResult()。
@@ -81,6 +194,7 @@ namespace XiaoJie
         private bool _full;
         private string _status = "";
         private bool _disposed;
+        internal bool LastAddedAtStart { get; private set; }
 
         public LongShotStitcher(int width)
         {
@@ -181,6 +295,7 @@ namespace XiaoJie
                     _prevSigStart = 0;
                     _prevSigLen = sig.Height;
                     _status = "已获取首帧";
+                    LastAddedAtStart = false;
                     return true;
                 }
 
@@ -255,6 +370,7 @@ namespace XiaoJie
                 else
                     ok = ApplyMatch(best, sig, prepared);
                 if (!ok) return false;
+                LastAddedAtStart = best.Prepend;
                 return true;
             }
             finally

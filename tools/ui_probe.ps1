@@ -59,7 +59,7 @@ public static class UiProbe
     public static void WheelEvent(int delta) { mouse_event(MOUSEWHEEL, 0, 0, (uint)delta, UIntPtr.Zero); }
 }
 "@
-function Find-XJWindow { return [UiProbe]::FindByTitle('XiaoJie_WeChatShot_Hidden_v1') }
+function Find-XJWindow { return [UiProbe]::FindByTitle('ScreenshotHelper_Hidden_v1') }
 function Send-XJHotkey([IntPtr]$hwnd) { return [UiProbe]::PostMessage($hwnd, 0x0312, [IntPtr]0x5A11, [IntPtr]::Zero) }
 function Save-ScreenPng([string]$path) {
     Add-Type -AssemblyName System.Drawing

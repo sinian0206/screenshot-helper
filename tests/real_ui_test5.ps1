@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 . (Join-Path $root 'tools\ui_probe.ps1')
-if (-not $Exe) { $Exe = Join-Path $root 'build_lead\微信截图助手.exe' }
+if (-not $Exe) { $Exe = Join-Path $root 'build_lead\截图助手.exe' }
 if (-not (Test-Path $Exe)) { throw "找不到 exe: $Exe" }
 $out = Join-Path $root $OutDir
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -23,7 +23,7 @@ $cfg = @{
 } | ConvertTo-Json -Depth 5
 Set-Content -Encoding UTF8 (Join-Path $exeDir 'config.json') $cfg
 
-Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
 $targetErr = Join-Path $out 'target_err.txt'
 $targetOut = Join-Path $out 'target_out.txt'
 Remove-Item $targetErr, $targetOut -ErrorAction SilentlyContinue
@@ -150,7 +150,7 @@ public static class TitleSearch {
     }
 }
 finally {
-    Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
     if (-not $target.HasExited) { $target.Kill() }
     Start-Sleep -Milliseconds 300
 }

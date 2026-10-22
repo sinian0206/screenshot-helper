@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 . (Join-Path $root 'tools\ui_probe.ps1')
-if (-not $Exe) { $Exe = Join-Path $root 'build_lead\微信截图助手.exe' }
+if (-not $Exe) { $Exe = Join-Path $root 'build_lead\截图助手.exe' }
 if (-not (Test-Path $Exe)) { throw "找不到 exe: $Exe" }
 $out = Join-Path $root $OutDir
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -29,7 +29,7 @@ $cfg = @{
 } | ConvertTo-Json -Depth 5
 Set-Content -Encoding UTF8 (Join-Path $exeDir 'config.json') $cfg
 
-Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
 $mockLog = Join-Path $out 'mock_requests.jsonl'
 Remove-Item $mockLog -ErrorAction SilentlyContinue
@@ -41,7 +41,7 @@ if (-not $mockReady) { throw "mock 服务未能在端口 $MockPort 启动" }
 function Wait-OverlayGone([int]$timeoutMs = 3000) {
     $deadline = (Get-Date).AddMilliseconds($timeoutMs)
     while ((Get-Date) -lt $deadline) {
-        if ([UiProbe]::FindByTitle('微信截图助手 - 截图') -eq [IntPtr]::Zero) { return $true }
+        if ([UiProbe]::FindByTitle('截图助手 - 截图') -eq [IntPtr]::Zero) { return $true }
         Start-Sleep -Milliseconds 120
     }
     return $false
@@ -81,7 +81,7 @@ public static class KeyCombo {
     [KeyCombo]::AltShiftA()
     Start-Sleep -Milliseconds 1100
     Save-ScreenPng (Join-Path $out 'a_hotkey_overlay.png')
-    $overlay = [UiProbe]::FindByTitle('微信截图助手 - 截图')
+    $overlay = [UiProbe]::FindByTitle('截图助手 - 截图')
     if ($overlay -eq [IntPtr]::Zero) { $failures += 'A: 全局热键未触发截图覆盖层' }
     [UiProbe]::Esc(); Start-Sleep -Milliseconds 500
     if (-not (Wait-OverlayGone 2000)) { $failures += 'A: 覆盖层未关闭' }
@@ -92,7 +92,7 @@ public static class KeyCombo {
     [UiProbe]::Click(1200, 400)    # 单击（不拖拽）选中鼠标下的窗口
     Start-Sleep -Milliseconds 700
     Save-ScreenPng (Join-Path $out 'b_window_detect.png')
-    if ([UiProbe]::FindByTitle('微信截图助手 - 截图') -eq [IntPtr]::Zero) { $failures += 'B: 窗口识别后覆盖层消失' }
+    if ([UiProbe]::FindByTitle('截图助手 - 截图') -eq [IntPtr]::Zero) { $failures += 'B: 窗口识别后覆盖层消失' }
     [UiProbe]::Esc(); Start-Sleep -Milliseconds 500
 
     # ---------- C. 保存按钮（下载图标） ----------
@@ -124,7 +124,7 @@ public static class KeyCombo {
     if (-not (Wait-OverlayGone 2500)) { $failures += 'E: 翻译面板关闭后覆盖层未关闭' }
 }
 finally {
-    Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
     if (-not $mock.HasExited) { $mock.Kill() }
     Start-Sleep -Milliseconds 300
 }

@@ -1,5 +1,5 @@
 # DeepSeek API mock 回归测试（开发/QA 用）
-# 启动本地 mock 服务 → 运行微信截图助手 --selftest（带 --mock-url）→ 校验报告
+# 启动本地 mock 服务，运行截图助手自检并校验报告。
 param(
     [int]$Port = 18765,
     [string]$Exe = '',
@@ -9,8 +9,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 if (-not $Exe) {
-    $Exe = Join-Path $root 'build_lead\微信截图助手.exe'
-    if (-not (Test-Path $Exe)) { $Exe = Join-Path $root 'dist\微信截图助手.exe' }
+    $Exe = Join-Path $root 'build_lead\截图助手.exe'
+    if (-not (Test-Path $Exe)) { $Exe = Join-Path $root 'dist\截图助手.exe' }
 }
 if (-not (Test-Path $Exe)) { throw "找不到 exe: $Exe" }
 if (-not $Report) { $Report = Join-Path $root 'tests\selftest-api.txt' }

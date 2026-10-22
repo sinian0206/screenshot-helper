@@ -1,13 +1,13 @@
 #requires -version 5.1
 <#
-  微信截图助手（DeepSeek 版）- 冒烟测试
+  截图助手（DeepSeek 版）- 冒烟测试
   ========================================================
   在临时目录（build_docs\smoke）里从零构建，然后对最终 exe 做一组最小验收断言：
-    1. 构建成功，输出目录里只有一个 exe（无 dll / config 等额外依赖，绿色单文件）
+    1. 构建成功，输出目录包含主程序和完整的 ocr 本地识别目录
     2. exe 体积 < 2 MB
     3. 文件版本信息 ProductName / FileVersion 正确
     4. exe 关联图标可提取、清单（PerMonitorV2）已嵌入
-    5. 运行 微信截图助手.exe --selftest：退出码 0，报告含「结果: 全部通过」，无 [FAIL]/[FATAL]
+    5. 运行 截图助手.exe --selftest：退出码 0，报告含「结果: 全部通过」，无 [FAIL]/[FATAL]
   每项输出 PASS/FAIL，最后汇总；全部通过退出码 0，否则 1。
 
   用法:
@@ -19,7 +19,7 @@
     - 构建失败（通常是队友正在同时改代码 / 构建，obj 目录被占用）会自动等待
       RetryWaitSec 秒重试，最多 BuildRetries 次；不会修改任何源码。
     - 测试产物都在 build_docs\smoke 下（已被 .gitignore 忽略），不会占用 dist\。
-    - 测试结束会结束本脚本启动的 微信截图助手 进程。
+    - 测试结束会结束本脚本启动的 截图助手 进程。
 #>
 [CmdletBinding()]
 param(
@@ -45,9 +45,21 @@ $buildDir = Join-Path $workRoot 'build'
 $selftestDir = Join-Path $workRoot 'selftest'
 $reportPath = Join-Path $selftestDir 'selftest-report.txt'
 $buildLog = Join-Path $workRoot 'build.log'
-$exeName = '微信截图助手.exe'
+$exeName = '截图助手.exe'
 $exe = Join-Path $outDir $exeName
 $buildScript = Join-Path $root 'build.ps1'
+
+# 所有递归清理仅限固定的测试产物目录。
+foreach ($testPath in @($workRoot, $outDir, $buildDir)) {
+    $absolute = [IO.Path]::GetFullPath($testPath).TrimEnd('\')
+    $allowed = [IO.Path]::GetFullPath((Join-Path $root 'build_docs\smoke')).TrimEnd('\')
+    if ($absolute -ne $allowed -and -not $absolute.StartsWith($allowed + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "测试清理路径超出产物目录：$absolute"
+    }
+    if ((Test-Path -LiteralPath $absolute) -and ((Get-Item -LiteralPath $absolute).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "测试清理拒绝重解析目录：$absolute"
+    }
+}
 
 $checks = @()
 
@@ -70,7 +82,7 @@ function Get-PwshPath {
 function Stop-SmokeProcess {
     param([string]$ExePath)
     try {
-        Get-Process -Name '微信截图助手' -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-Process -Name '截图助手' -ErrorAction SilentlyContinue | ForEach-Object {
             $path = $null
             try { $path = $_.Path } catch { }
             if ($path -and [string]::Equals($path, $ExePath, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -82,7 +94,7 @@ function Stop-SmokeProcess {
 }
 
 $swAll = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Host '=== 微信截图助手 冒烟测试 ===' -ForegroundColor Cyan
+Write-Host '=== 截图助手 冒烟测试 ===' -ForegroundColor Cyan
 Write-Host ("  项目根目录: {0}" -f $root)
 Write-Host ("  配置:       {0}" -f $Configuration)
 
@@ -127,7 +139,8 @@ try {
     Add-Check '从零构建成功' $built ("退出码 $buildExit；exe: $exe")
     if (-not $built) {
         Write-Host ''
-        Write-Host '结果: 构建失败（可能是队友正在同时构建，请稍后重试；本脚本不会修改源码）' -ForegroundColor Red
+        Write-Host ('结果: 构建失败，日志：' + $buildLog) -ForegroundColor Red
+        Get-Content -LiteralPath $buildLog -Tail 20 -ErrorAction SilentlyContinue
         exit 1
     }
 }
@@ -141,13 +154,13 @@ if (Test-Path -LiteralPath $buildLog) {
     Get-Content -LiteralPath $buildLog -Tail 7 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ('  ' + $_) -ForegroundColor DarkGray }
 }
 
-# ---------- 1. 输出目录必须是单文件 ----------
+# ---------- 1. 便携程序与完整本地 OCR ----------
 $children = @(Get-ChildItem -LiteralPath $outDir -Force -ErrorAction SilentlyContinue)
 $fileChildren = @($children | Where-Object { -not $_.PSIsContainer })
 $dirChildren = @($children | Where-Object { $_.PSIsContainer })
-$onlyExe = ($fileChildren.Count -eq 1) -and ($fileChildren[0].Name -eq $exeName) -and ($dirChildren.Count -eq 0)
+$onlyExe = ($fileChildren.Count -eq 2) -and ($fileChildren.Name -contains $exeName) -and ($fileChildren.Name -contains 'RecorderNative.dll') -and (Test-Path -LiteralPath (Join-Path $outDir 'ocr\RapidOCR-json.exe'))
 $detail = ($children | ForEach-Object { if ($_.PSIsContainer) { $_.Name + '\' } else { $_.Name } }) -join ', '
-Add-Check '输出目录只有单个 exe（无 dll/config 等额外依赖）' $onlyExe $detail
+Add-Check '便携程序、系统录制组件与本地 OCR 引擎存在' $onlyExe $detail
 
 # ---------- 2. 体积 ----------
 $exeItem = Get-Item -LiteralPath $exe
@@ -159,9 +172,11 @@ Add-Check 'exe 体积合理（> 50 KB，非空壳）' ($sizeBytes -gt 50KB) ("{0
 # ---------- 3. 文件版本信息 ----------
 try {
     $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
-    Add-Check 'ProductName 含「微信截图助手」' ($vi.ProductName -like '*微信截图助手*') ("ProductName: " + $vi.ProductName)
-    Add-Check 'FileVersion 为 1.0.0.x' ($vi.FileVersion -like '1.0.0.*') ("FileVersion: " + $vi.FileVersion)
-    Add-Check 'ProductVersion 为 1.0.0' ($vi.ProductVersion -like '1.0.0*') ("ProductVersion: " + $vi.ProductVersion)
+    $expectedProduct = '截图助手'
+    Add-Check "ProductName 精确为「$expectedProduct」" ([string]::Equals($vi.ProductName, $expectedProduct, [System.StringComparison]::Ordinal)) ("ProductName: " + $vi.ProductName)
+    Add-Check 'ProductName 不含旧名称' (-not ([string]$vi.ProductName).Contains('微信')) ("ProductName: " + $vi.ProductName)
+    Add-Check 'FileVersion 为 1.2.4.x' ($vi.FileVersion -like '1.2.4.*') ("FileVersion: " + $vi.FileVersion)
+    Add-Check 'ProductVersion 为 1.2.4' ($vi.ProductVersion -like '1.2.4*') ("ProductVersion: " + $vi.ProductVersion)
 }
 catch {
     Add-Check '读取文件版本信息' $false $_.Exception.Message
@@ -196,8 +211,8 @@ try {
     if (Test-Path -LiteralPath $reportPath) { Remove-Item -LiteralPath $reportPath -Force }
     $argLine = '--selftest --out "{0}"' -f $reportPath
     Write-Host ''
-    Write-Host '[自检] 运行 微信截图助手.exe --selftest ...' -ForegroundColor DarkGray
-    $proc = Start-Process -FilePath $exe -ArgumentList $argLine -WorkingDirectory $outDir -PassThru
+    Write-Host '[自检] 运行 截图助手.exe --selftest ...' -ForegroundColor DarkGray
+    $proc = Start-Process -FilePath $exe -ArgumentList $argLine -WorkingDirectory $outDir -WindowStyle Hidden -PassThru
     if (-not $proc.WaitForExit(180000)) {
         try { $proc.Kill() } catch { }
         Add-Check '自检运行完成（未超时）' $false '超时 180 秒，已强制结束'
@@ -234,7 +249,7 @@ finally {
 # ---------- 6. 无残留进程 ----------
 $left = @{}
 try {
-    Get-Process -Name '微信截图助手' -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process -Name '截图助手' -ErrorAction SilentlyContinue | ForEach-Object {
         $p = $null
         try { $p = $_.Path } catch { }
         if ($p -and [string]::Equals($p, $exe, [System.StringComparison]::OrdinalIgnoreCase)) { $left[$p] = $true }

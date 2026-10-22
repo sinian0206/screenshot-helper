@@ -8,14 +8,14 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 . (Join-Path $root 'tools\ui_probe.ps1')
-if (-not $Exe) { $Exe = Join-Path $root 'build_lead\微信截图助手.exe' }
+if (-not $Exe) { $Exe = Join-Path $root 'build_lead\截图助手.exe' }
 if (-not (Test-Path $Exe)) { throw "找不到 exe: $Exe" }
 $out = Join-Path $root $OutDir
 New-Item -ItemType Directory -Force $out | Out-Null
 $exeDir = Split-Path -Parent $Exe
 
 function Stop-App {
-    Get-Process 微信截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process 截图助手 -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 300
 }
 
@@ -46,7 +46,7 @@ try {
     $app = Start-Process -FilePath $Exe -PassThru
     Start-Sleep -Milliseconds 1800
     Save-ScreenPng (Join-Path $out 'a_firstrun.png')
-    $welcome = [UiProbe]::FindByTitle('欢迎使用微信截图助手')
+    $welcome = [UiProbe]::FindByTitle('欢迎使用截图助手')
     if ($welcome -eq [IntPtr]::Zero) { $failures += 'A: 未找到首次运行欢迎窗口' }
     [UiProbe]::Esc(); Start-Sleep -Milliseconds 500
     Stop-App
@@ -60,7 +60,7 @@ try {
     [UiProbe]::PostMessage($hidden, 0x8003, [IntPtr]::Zero, [IntPtr]::Zero)  # WM_APP_OPEN_SETTINGS
     Start-Sleep -Milliseconds 1400
     Save-ScreenPng (Join-Path $out 'b_settings.png')
-    $settings = [UiProbe]::FindByTitle('微信截图助手 - 设置')
+    $settings = [UiProbe]::FindByTitle('截图助手 - 设置')
     if ($settings -eq [IntPtr]::Zero) { $failures += 'B: 未找到设置窗口' }
     [UiProbe]::Esc(); Start-Sleep -Milliseconds 600
 
@@ -86,7 +86,7 @@ try {
     }
 
     # ---------- D. 表情选择器（出现后 Esc 关闭） ----------
-    if ((Get-Process 微信截图助手 -ErrorAction SilentlyContinue) -eq $null) {
+    if ((Get-Process 截图助手 -ErrorAction SilentlyContinue) -eq $null) {
         $app = Start-Process -FilePath $Exe -PassThru
         Start-Sleep -Milliseconds 1600
         $hidden = Find-XJWindow

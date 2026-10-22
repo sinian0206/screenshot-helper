@@ -1,217 +1,64 @@
 #requires -version 5.1
-<#
-  微信截图助手（DeepSeek 版）- 构建脚本
-  ========================================================
-  把 src\微信截图助手.csproj（.NET Framework 4.8 / WinForms）编译成单个绿色 exe。
-
-  用法:
-    pwsh -File build.ps1                        # Release 构建，输出 dist\微信截图助手.exe
-    pwsh -File build.ps1 -Configuration Debug   # Debug 构建
-    pwsh -File build.ps1 -OutDir build_docs     # 自定义输出目录（相对路径基于项目根目录）
-    pwsh -File build.ps1 -OutDir D:\tmp\out     # 绝对路径也支持
-    pwsh -File build.ps1 -Clean                 # 先清理 build\ 与输出目录再构建
-    pwsh -File build.ps1 -Test                  # 构建后运行 --selftest 并校验报告
-
-  参数:
-    -Configuration  Debug / Release，默认 Release
-    -OutDir         只放最终 exe 的输出目录，默认 dist
-    -BuildDir       中间产物目录，默认 build（队友并行构建时可改用自己的目录）
-    -Clean          构建前删除中间目录和输出目录（有安全校验，不会删项目根目录）
-    -Test           构建后运行 exe 的 --selftest，报告写到 <BuildDir>\selftest\，失败即报错
-
-  说明:
-    - dotnet build 产物先在 BuildDir，然后只把 微信截图助手.exe 复制到 OutDir（绿色单文件）。
-    - 构建失败会自动重试 1 次（队友同时构建时 obj 目录可能被占用）。
-    - 本脚本不做任何 git 操作。
-#>
 [CmdletBinding()]
 param(
-    [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Release',
-
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [string]$OutDir = 'dist',
-
     [string]$BuildDir = 'build',
-
+    [string]$OcrRuntime = 'C:\Dev\Tools\RapidOCR\portable-v4',
     [switch]$Clean,
-
     [switch]$Test
 )
-
 $ErrorActionPreference = 'Stop'
-
-# ---------- 基础路径 ----------
 $root = $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($root)) {
-    $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+function Resolve-BuildPath([string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value)) { throw '构建路径不能为空。' }
+    if ([IO.Path]::IsPathRooted($value)) { return [IO.Path]::GetFullPath($value) }
+    return [IO.Path]::GetFullPath((Join-Path $root $value))
 }
-$root = [System.IO.Path]::GetFullPath($root).TrimEnd('\')
-$proj = Join-Path $root 'src\微信截图助手.csproj'
-$appName = '微信截图助手'
-$exeName = $appName + '.exe'
-
-function Resolve-ProjectPath {
-    param([string]$Path, [string]$Name)
-    if ([string]::IsNullOrWhiteSpace($Path)) { throw "$Name 不能为空" }
-    if ([System.IO.Path]::IsPathRooted($Path)) { return [System.IO.Path]::GetFullPath($Path) }
-    return [System.IO.Path]::GetFullPath((Join-Path $root $Path))
+$buildFull = Resolve-BuildPath $BuildDir
+$outFull = Resolve-BuildPath $OutDir
+if ($buildFull.TrimEnd('\') -eq $root.TrimEnd('\') -or $outFull.TrimEnd('\') -eq $root.TrimEnd('\')) {
+    throw '构建输出不能是项目根目录。'
 }
-
-function Assert-SafeDeleteTarget {
-    param([string]$Path, [string]$Label)
-    $p = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
-    if ($p.Length -le 2) { throw "-Clean 拒绝删除磁盘根目录: $p" }
-    if ([string]::Equals($p, $root, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "-Clean 拒绝删除项目根目录: $p"
-    }
-    if ($root.StartsWith($p + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "-Clean 拒绝删除项目根目录的上级目录（$Label）: $p"
-    }
-    $src = Join-Path $root 'src'
-    if ([string]::Equals($p, $src, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "-Clean 拒绝删除源码目录（$Label）: $p"
-    }
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$msbuild = $null
+if (Test-Path -LiteralPath $vswhere) {
+    $msbuild = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
 }
-
-$buildFull = Resolve-ProjectPath $BuildDir 'BuildDir'
-$outFull = Resolve-ProjectPath $OutDir 'OutDir'
-
-# 中间目录与输出目录不能是项目根目录 / 源码目录
-foreach ($pair in @(@($buildFull, 'BuildDir'), @($outFull, 'OutDir'))) {
-    $p = $pair[0].TrimEnd('\')
-    $label = $pair[1]
-    if ([string]::Equals($p, $root, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "$label 不能是项目根目录: $p"
-    }
-    if ([string]::Equals($p, (Join-Path $root 'src'), [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "$label 不能是源码目录: $p"
-    }
+if (-not $msbuild) { throw '未找到已有 Visual Studio MSBuild，请在 Visual Studio 中安装 .NET 桌面开发组件。' }
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $root 'assets\ocr-manifest.json') | ConvertFrom-Json
+foreach ($file in $manifest.files) {
+    $path = Join-Path $OcrRuntime $file.path
+    if (-not (Test-Path -LiteralPath $path)) { throw "OCR 组件缺失：$path。请先执行 tools\fetch-ocr.ps1。" }
+    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $file.sha256) { throw "OCR 组件校验失败：$path" }
 }
-
-if (-not (Test-Path -LiteralPath $proj)) { throw "未找到项目文件: $proj" }
-$dotnetCmd = Get-Command dotnet -ErrorAction SilentlyContinue
-if (-not $dotnetCmd) {
-    throw '未找到 dotnet 命令。请安装 .NET SDK 10（本项目 target net48，可用新 SDK 编译），并确认 dotnet 在 PATH 中。'
-}
-
-Write-Host '=== 微信截图助手 构建 ===' -ForegroundColor Cyan
-Write-Host ("  项目根目录: {0}" -f $root)
-Write-Host ("  配置:       {0}" -f $Configuration)
-Write-Host ("  中间目录:   {0}" -f $buildFull)
-Write-Host ("  输出目录:   {0}" -f $outFull)
-
-# ---------- 清理 ----------
-if ($Clean) {
-    Assert-SafeDeleteTarget $buildFull 'BuildDir'
-    Assert-SafeDeleteTarget $outFull 'OutDir'
-    foreach ($target in @(@($buildFull, '中间目录'), @($outFull, '输出目录'))) {
-        $dir = $target[0]
-        if (Test-Path -LiteralPath $dir) {
-            Remove-Item -LiteralPath $dir -Recurse -Force
-            Write-Host ("  已清理{0}: {1}" -f $target[1], $dir) -ForegroundColor DarkGray
-        }
-    }
-}
-
-New-Item -ItemType Directory -Force -Path $buildFull | Out-Null
-New-Item -ItemType Directory -Force -Path $outFull | Out-Null
-
-# ---------- dotnet build（失败自动重试 1 次） ----------
-$sw = [System.Diagnostics.Stopwatch]::StartNew()
-$attempts = 2
-$exitCode = -1
-for ($i = 1; $i -le $attempts; $i++) {
-    if ($i -gt 1) {
-        Write-Host '  等待 10 秒后重试（可能遇到队友同时构建导致的 obj 目录锁）...' -ForegroundColor Yellow
-        Start-Sleep -Seconds 10
-    }
-    Write-Host ("[构建] dotnet build -c {0} -o {1}（第 {2}/{3} 次）" -f $Configuration, $buildFull, $i, $attempts) -ForegroundColor DarkGray
-
-    # IncludeSourceRevisionInInformationalVersion=false：让 ProductVersion 稳定为 1.0.0，
-    # 不因 git 提交号变化（版本信息更干净，也便于校验）。
-    & dotnet build $proj -c $Configuration -o $buildFull -v minimal --nologo -p:IncludeSourceRevisionInInformationalVersion=false
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -eq 0) { break }
-    Write-Warning ("dotnet build 失败（退出码 {0}）" -f $exitCode)
-}
-$sw.Stop()
-
-if ($exitCode -ne 0) {
-    throw ("dotnet build 失败（退出码 {0}）。如果是队友正在同时构建，请稍后重试；本脚本不会修改任何源码。" -f $exitCode)
-}
-
-$builtExe = Join-Path $buildFull $exeName
-if (-not (Test-Path -LiteralPath $builtExe)) {
-    throw "构建成功但未找到产物: $builtExe"
-}
-
-# ---------- 清理中间产物中的伴生文件，只保留 exe ----------
-$sideExts = @('.pdb', '.xml', '.json')
-Get-ChildItem -LiteralPath $buildFull -File -ErrorAction SilentlyContinue |
-    Where-Object {
-        $_.Name -like '*.exe.config' -or
-        $sideExts -contains $_.Extension.ToLowerInvariant()
-    } |
-    Remove-Item -Force -ErrorAction SilentlyContinue
-
-# ---------- 只复制 exe 到输出目录 ----------
-$targetExe = Join-Path $outFull $exeName
-Copy-Item -LiteralPath $builtExe -Destination $targetExe -Force
-
-# 防止旧构建把伴生文件带进输出目录（绿色版要求单文件）
-foreach ($side in @($exeName + '.config', $appName + '.pdb')) {
-    $sidePath = Join-Path $outFull $side
-    if (Test-Path -LiteralPath $sidePath) {
-        Remove-Item -LiteralPath $sidePath -Force
-        Write-Host ("  已清理输出目录中的多余文件: {0}" -f $sidePath) -ForegroundColor DarkGray
-    }
-}
-
-# ---------- 输出摘要 ----------
-$item = Get-Item -LiteralPath $targetExe
-$sha256 = (Get-FileHash -LiteralPath $targetExe -Algorithm SHA256).Hash
-$sizeKB = [math]::Round($item.Length / 1KB, 1)
-
-Write-Host ''
-Write-Host '构建成功' -ForegroundColor Green
-Write-Host ("  产物路径: {0}" -f $item.FullName)
-Write-Host ("  文件体积: {0} KB（{1:N0} 字节）" -f $sizeKB, $item.Length)
-Write-Host ("  SHA256:   {0}" -f $sha256)
-Write-Host ("  构建耗时: {0:N1} 秒" -f $sw.Elapsed.TotalSeconds)
-Write-Host ("  输出目录: {0}" -f $outFull)
-
-# ---------- 可选：运行内置自检 ----------
+if (-not (Test-Path -LiteralPath (Join-Path $OcrRuntime 'ocr-licenses\NOTICE.txt'))) { throw 'OCR 运行时缺少许可证与来源说明。' }
+New-Item -ItemType Directory -Force -Path $buildFull, $outFull | Out-Null
+$intermediate = Join-Path $buildFull 'obj'
+$target = if ($Clean) { 'Rebuild' } else { 'Build' }
+$watch = [Diagnostics.Stopwatch]::StartNew()
+& $msbuild (Join-Path $root '截图助手.sln') /restore "/t:$target" "/p:Configuration=$Configuration" "/p:OutputPath=$buildFull\" "/p:BaseIntermediateOutputPath=$intermediate\" "/p:MSBuildProjectExtensionsPath=$intermediate\" /p:IncludeSourceRevisionInInformationalVersion=false /v:minimal /nologo
+if ($LASTEXITCODE -ne 0) { throw "Visual Studio 构建失败：$LASTEXITCODE" }
+& (Join-Path $root 'native\build-recorder.ps1') -Configuration $Configuration -OutDir (Join-Path $buildFull 'native')
+if ($LASTEXITCODE -ne 0) { throw '录屏组件构建失败。' }
+Copy-Item -LiteralPath (Join-Path $buildFull 'native\RecorderNative.dll') -Destination (Join-Path $outFull 'RecorderNative.dll') -Force
+$builtExe = Join-Path $buildFull '截图助手.exe'
+$exe = Join-Path $outFull '截图助手.exe'
+if ($builtExe -ne $exe) { Copy-Item -LiteralPath $builtExe -Destination $exe -Force }
+$ocrOut = Join-Path $outFull 'ocr'
+New-Item -ItemType Directory -Force -Path $ocrOut | Out-Null
+Get-ChildItem -LiteralPath $OcrRuntime | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $ocrOut -Recurse -Force }
+$watch.Stop()
+Write-Host ("产物：{0}（{1:N0} B）；OCR 组件：{2}" -f $exe, (Get-Item -LiteralPath $exe).Length, $ocrOut)
+Write-Host ("SHA256：{0}；构建耗时：{1:N1}s" -f (Get-FileHash -LiteralPath $exe).Hash, $watch.Elapsed.TotalSeconds)
 if ($Test) {
     $reportDir = Join-Path $buildFull 'selftest'
     New-Item -ItemType Directory -Force -Path $reportDir | Out-Null
-    $reportPath = Join-Path $reportDir 'selftest-report.txt'
-    if (Test-Path -LiteralPath $reportPath) { Remove-Item -LiteralPath $reportPath -Force }
-
-    Write-Host ''
-    Write-Host '[自检] 运行 微信截图助手.exe --selftest ...' -ForegroundColor DarkGray
-    $argLine = '--selftest --out "{0}"' -f $reportPath
-    $proc = Start-Process -FilePath $targetExe -ArgumentList $argLine -PassThru
-    if (-not $proc.WaitForExit(180000)) {
-        try { $proc.Kill() } catch { }
-        throw '自检运行超时（180 秒），已强制结束进程。'
-    }
-    $selftestExit = $proc.ExitCode
-
-    if (-not (Test-Path -LiteralPath $reportPath)) {
-        throw ("自检未生成报告（退出码 {0}）: {1}" -f $selftestExit, $reportPath)
-    }
-    $reportText = [System.IO.File]::ReadAllText($reportPath)
-    Write-Host $reportText.TrimEnd()
-
-    $ok = ($selftestExit -eq 0) -and
-          $reportText.Contains('结果: 全部通过') -and
-          (-not $reportText.Contains('[FAIL]')) -and
-          (-not $reportText.Contains('[FATAL]'))
-    if (-not $ok) {
-        throw ("自检失败（退出码 {0}）。报告: {1}" -f $selftestExit, $reportPath)
-    }
-    Write-Host ''
-    Write-Host ("自检通过（报告: {0}）" -f $reportPath) -ForegroundColor Green
+    $report = Join-Path $reportDir 'selftest-report.txt'
+    $proc = Start-Process -FilePath $exe -ArgumentList ('--selftest --out "{0}"' -f $report) -WindowStyle Hidden -PassThru
+    if (-not $proc.WaitForExit(30000)) { $proc.Kill(); throw '自检超过 30 秒。' }
+    if (-not (Test-Path -LiteralPath $report)) { throw '自检未生成报告。' }
+    $content = Get-Content -Raw -LiteralPath $report
+    Write-Output $content
+    if ($proc.ExitCode -ne 0 -or $content -match '\[FAIL\]|\[FATAL\]') { throw '自检失败。' }
 }
-
-exit 0

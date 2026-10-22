@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>截图助手 · 高级简约</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #181c22;
+      --ink-2: #2b3038;
+      --ink-3: #e9ecf0;
+      --line: #d7dce2;
+      --paper: #f4f6f8;
+      --paper-2: #ffffff;
+      --text: #1c2027;
+      --muted: #707986;
+      --white: #ffffff;
+      --signal: #24282f;
+      --teal: #3157e8;
+      --teal-dark: #e9edf8;
+      --critical: #be3844;
+      --critical-soft: #f8eaec;
+      --radius: 2px;
+      --shadow: 0 18px 48px rgb(25 32 43 / 10%);
+      --ui: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+      --mono: "Cascadia Mono", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font: 14px/1.45 var(--ui);
+      background: #f5f5f7;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible {
+      outline: 2px solid var(--teal);
+      outline-offset: 3px;
+    }
+
+    .shell {
+      width: min(1440px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      background: var(--signal);
+      color: #ffffff;
+      border-radius: 10px;
+      font: 700 15px/1 var(--ui);
+    }
+    .brand h1 { margin: 0; font-size: 19px; letter-spacing: 0; }
+    .brand p { margin: 1px 0 0; color: var(--muted); font-size: 12px; }
+    .status-cluster {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--muted);
+      font: 12px var(--ui);
+    }
+    .status-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 7px;
+      border-radius: 50%;
+      background: var(--teal);
+      box-shadow: 0 0 0 4px rgb(49 87 232 / 10%);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1.7fr) minmax(320px, .75fr);
+      gap: 18px;
+      align-items: start;
+      min-width: 0;
+    }
+    aside, .panel, .panel-head, .tab-page { min-width: 0; }
+    .frame {
+      position: relative;
+      min-height: 680px;
+      overflow: hidden;
+      border: 1px solid #e3e5e9;
+      border-radius: 18px;
+      background: #eceef1;
+      box-shadow: var(--shadow);
+    }
+    .frame::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(145deg, rgb(255 255 255 / 58%), transparent 42%);
+    }
+    .mock-window {
+      position: absolute;
+      inset: 36px 42px 118px 42px;
+      overflow: hidden;
+      background: #ffffff;
+      color: var(--text);
+      border-radius: 14px;
+      box-shadow: 0 8px 30px rgb(23 30 40 / 8%);
+    }
+    .mock-title {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px;
+      border-bottom: 1px solid #e4e7eb;
+      font-weight: 700;
+    }
+    .mock-title i { width: 10px; height: 10px; border-radius: 50%; background: var(--signal); }
+    .mock-body { display: grid; grid-template-columns: 1fr 210px; gap: 26px; padding: 28px; }
+    .mock-copy h2 { margin: 0 0 12px; font-size: 28px; line-height: 1.25; }
+    .mock-copy p { margin: 0 0 10px; color: #56606e; }
+    .mock-lines { margin-top: 24px; display: grid; gap: 10px; }
+    .mock-lines span { height: 8px; background: #e7eaee; }
+    .mock-lines span:nth-child(2) { width: 84%; }
+    .mock-lines span:nth-child(3) { width: 62%; }
+    .side-card { min-height: 210px; padding: 16px; border: 1px solid #e5e5ea; border-radius: 12px; background: #fafbfc; }
+    .side-card b { color: var(--muted); font: 600 11px var(--ui); }
+    .side-card ul { margin: 16px 0 0; padding-left: 18px; color: #56606e; }
+
+    .selection {
+      position: absolute;
+      left: 88px;
+      top: 118px;
+      width: min(630px, calc(100% - 170px));
+      height: 388px;
+      border: 1.5px solid var(--teal);
+      outline: 1px solid rgb(255 255 255 / 92%);
+      outline-offset: 2px;
+      pointer-events: none;
+    }
+    .selection::before {
+      content: "630 × 388";
+      position: absolute;
+      left: -2px;
+      top: -34px;
+      padding: 7px 10px;
+      color: var(--text);
+      background: rgb(255 255 255 / 92%);
+      border: 1px solid rgb(209 209 214 / 80%);
+      border-radius: 8px;
+      box-shadow: 0 4px 14px rgb(25 32 43 / 10%);
+      font: 600 11px var(--ui);
+    }
+    .handle { position: absolute; width: 9px; height: 9px; border: 2px solid var(--teal); border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgb(25 32 43 / 18%); }
+    .h1 { left: -6px; top: -6px; }
+    .h2 { left: 50%; top: -6px; transform: translateX(-50%); }
+    .h3 { right: -6px; top: -6px; }
+    .h4 { right: -6px; top: 50%; transform: translateY(-50%); }
+    .h5 { right: -6px; bottom: -6px; }
+    .h6 { left: 50%; bottom: -6px; transform: translateX(-50%); }
+    .h7 { left: -6px; bottom: -6px; }
+    .h8 { left: -6px; top: 50%; transform: translateY(-50%); }
+
+    .console {
+      position: absolute;
+      left: 50%;
+      bottom: 28px;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      max-width: calc(100% - 34px);
+      min-height: 58px;
+      padding: 7px 8px;
+      transform: translateX(-50%);
+      border: 1px solid var(--line);
+      background: rgb(255 255 255 / 97%);
+      box-shadow: 0 16px 38px rgb(23 30 40 / 14%);
+      border-radius: 16px;
+    }
+    .console::before { content: none; }
+    .rail { display: none; }
+    .tool, .action {
+      position: relative;
+      width: 42px;
+      height: 42px;
+      border: 0;
+      background: transparent;
+      color: var(--ink);
+      border-radius: 9px;
+      font: 500 16px var(--ui);
+      transition: background .14s ease, color .14s ease, transform .14s ease;
+    }
+    .tool:hover, .action:hover { background: var(--ink-3); color: var(--ink); transform: translateY(-1px); }
+    .tool.active { background: var(--teal-dark); color: var(--teal); box-shadow: inset 0 -2px 0 var(--teal); }
+    .action { color: var(--teal); }
+    .action.confirm { color: #ffffff; background: var(--signal); box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%); }
+    .action.confirm:hover { background: #111419; }
+    .action.close { color: var(--critical); }
+    .action.close:hover { background: var(--critical-soft); }
+    .action:disabled { color: #a5acb7; cursor: not-allowed; transform: none; }
+    .sep { width: 1px; height: 26px; margin: 0 5px; background: var(--line); }
+
+    .panel { overflow: hidden; border: 1px solid #e5e5ea; border-radius: 18px; background: var(--paper-2); color: var(--text); box-shadow: var(--shadow); }
+    .panel + .panel { margin-top: 18px; }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; min-height: 54px; padding: 0 18px; color: var(--text); background: #ffffff; border-bottom: 1px solid #efeff4; }
+    .panel-head strong { font-size: 15px; }
+    .panel-head code { color: var(--muted); font: 11px var(--ui); }
+    .panel-body { padding: 14px; }
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 3px; border-radius: 10px; background: #e9e9ed; }
+    .tab { min-height: 38px; border: 0; color: var(--muted); background: transparent; }
+    .tab:hover { background: #e4e7eb; color: var(--ink); }
+    .tab { border-radius: 8px; }
+    .tab.active { color: var(--text); background: #fff; font-weight: 600; box-shadow: 0 1px 4px rgb(25 32 43 / 10%); }
+    .tab-page { display: none; padding: 16px; }
+    .tab-page.active { display: block; }
+    .field { display: grid; grid-template-columns: 112px 1fr; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .field label { font-size: 12px; color: #4b5563; }
+    .field input { width: 100%; min-height: 36px; padding: 0 10px; color: var(--text); background: #fff; border: 1px solid #d1d1d6; border-radius: 8px; }
+    .field input:focus { border-color: var(--teal); }
+    .switch-row { display: flex; justify-content: space-between; align-items: center; min-height: 40px; padding: 0 12px; margin: 8px 0; border-radius: 10px; background: #f7f7f9; }
+    .switch { width: 38px; height: 20px; padding: 2px; border: 0; border-radius: 999px; background: #aeb5bf; }
+    .switch::after { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .16s ease; }
+    .switch[aria-checked="true"] { background: var(--teal); }
+    .switch[aria-checked="true"]::after { transform: translateX(18px); }
+    .search { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 12px; }
+    .search input { min-height: 36px; padding: 0 10px; border: 1px solid #d1d1d6; border-radius: 8px; background: #fff; }
+    .quiet { border: 1px solid #d1d1d6; border-radius: 8px; background: #fff; color: var(--text); padding: 0 12px; }
+    .history-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    .history-card { position: relative; min-height: 118px; overflow: hidden; padding: 44px 10px 10px; border: 1px solid #e5e5ea; border-radius: 12px; background: #fff; }
+    .history-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 34px; background: linear-gradient(110deg, #eef1f4 0 38%, #dce1e7 38% 72%, #f5f6f8 72%); }
+    .history-card::after { content: none; }
+    .history-card strong { display: block; font: 700 11px var(--mono); }
+    .history-card span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .favorite-btn { position: absolute; right: 5px; top: 5px; z-index: 2; border: 0; background: rgb(255 255 255 / 84%); color: #a97710; }
+    .empty { grid-column: 1 / -1; padding: 28px; color: var(--muted); text-align: center; }
+    .toast { position: fixed; left: 50%; bottom: 22px; z-index: 20; padding: 11px 16px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; color: var(--text); background: #fff; border-left: 2px solid var(--teal); box-shadow: var(--shadow); transition: opacity .18s ease, transform .18s ease; }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+    .testing .console { outline: 2px solid var(--teal); }
+    .testing .panel { outline: 2px solid #9aa4b2; }
+
+    @media (max-width: 980px) {
+      .workspace { grid-template-columns: 1fr; }
+      .frame { min-height: 620px; }
+      .console { flex-wrap: wrap; width: min(560px, calc(100% - 30px)); justify-content: center; }
+      .mock-window { inset: 28px 22px 164px; }
+      .selection { left: 54px; width: calc(100% - 108px); height: 322px; }
+    }
+    @media (max-width: 620px) {
+      .shell { width: calc(100vw - 20px); padding-top: 14px; }
+      .workspace { gap: 12px; }
+      .masthead { align-items: flex-start; }
+      .status-cluster span:last-child { display: none; }
+      .frame { min-height: 650px; }
+      .mock-window { inset: 24px 12px 224px; }
+      .mock-body { grid-template-columns: 1fr; padding: 18px; }
+      .side-card { display: none; }
+      .selection { left: 32px; top: 94px; width: calc(100% - 64px); height: 260px; }
+      .console { left: 8px; right: 8px; bottom: 12px; width: auto; max-width: none; padding: 6px; gap: 2px; transform: none; }
+      .tool, .action { flex: 0 0 34px; width: 34px; height: 34px; font-size: 14px; }
+      .sep { margin: 0 2px; }
+      .field { grid-template-columns: 92px minmax(0, 1fr); }
+      .tab { min-width: 0; padding: 0 4px; font-size: 12px; }
+      .panel-head code { font-size: 9px; }
+      .history-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">S</div>
+        <div><h1>截图助手</h1><p>简洁界面 · 交互视觉提案</p></div>
+      </div>
+      <div class="status-cluster" aria-label="运行状态">
+        <span><i class="status-dot"></i><span id="statusText">编辑就绪</span></span>
+        <span>v1.2.4</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="frame" aria-label="截图编辑器预览">
+        <div class="mock-window">
+          <div class="mock-title"><i></i>截图助手 · 工作区</div>
+          <div class="mock-body">
+            <div class="mock-copy">
+              <h2>克制的界面，<br>清晰的控制。</h2>
+              <p>留白、细线与低饱和蓝色状态构成新的视觉语言。</p>
+              <p>选区边缘、控制手柄与信息条保持像素级对齐。</p>
+              <div class="mock-lines"><span></span><span></span><span></span></div>
+            </div>
+            <aside class="side-card"><b>本地处理</b><ul><li>文字识别</li><li>原位翻译</li><li>区域保护</li><li>长截图</li></ul></aside>
+          </div>
+        </div>
+
+        <div class="selection" aria-label="当前选区">
+          <i class="handle h1"></i><i class="handle h2"></i><i class="handle h3"></i><i class="handle h4"></i>
+          <i class="handle h5"></i><i class="handle h6"></i><i class="handle h7"></i><i class="handle h8"></i>
+        </div>
+
+        <nav class="console" aria-label="编辑器工具栏">
+          <i class="rail"></i>
+          <button class="tool" data-tool="矩形" aria-label="矩形">□</button>
+          <button class="tool" data-tool="椭圆" aria-label="椭圆">○</button>
+          <button class="tool" data-tool="表情" aria-label="表情">☺</button>
+          <button class="tool" data-tool="箭头" aria-label="箭头">↗</button>
+          <button class="tool" data-tool="画笔" aria-label="画笔">✎</button>
+          <button class="tool" data-tool="马赛克" aria-label="马赛克">▦</button>
+          <button class="tool" data-tool="文字" aria-label="文字">T</button>
+          <button class="tool" data-tool="序号" aria-label="序号">①</button>
+          <button class="tool" data-tool="选择文字" aria-label="选择文字">▤</button>
+          <button class="tool" data-tool="选择" aria-label="选择">⌁</button>
+          <i class="sep"></i>
+          <button class="action" data-action="文字翻译" aria-label="文字翻译">译</button>
+          <button class="action" data-action="文字提取" aria-label="文字提取">文</button>
+          <button class="action" data-action="长截图" aria-label="长截图">⇕</button>
+          <i class="sep"></i>
+          <button class="action" id="undoBtn" data-action="撤销" aria-label="撤销" disabled>↶</button>
+          <button class="action" id="redoBtn" data-action="重做" aria-label="重做" disabled>↷</button>
+          <button class="action" data-action="保存" aria-label="保存">↓</button>
+          <button class="action" data-action="钉在桌面" aria-label="钉在桌面">⌖</button>
+          <button class="action close" data-action="关闭" aria-label="关闭">×</button>
+          <button class="action confirm" data-action="完成" aria-label="完成">✓</button>
+        </nav>
+      </section>
+
+      <aside>
+        <section class="panel" aria-label="设置面板">
+          <div class="panel-head"><strong>控制参数</strong><code>已同步</code></div>
+          <div class="tabs" role="tablist">
+            <button class="tab active" role="tab" aria-selected="true" data-tab="local">本地识别</button>
+            <button class="tab" role="tab" aria-selected="false" data-tab="api">接口</button>
+            <button class="tab" role="tab" aria-selected="false" data-tab="capture">截图</button>
+          </div>
+          <div class="tab-page active" data-page="local">
+            <div class="field"><label for="engine">识别引擎</label><input id="engine" value="本地离线引擎"></div>
+            <div class="switch-row"><span>自动识别文字</span><button class="switch" role="switch" aria-checked="true" aria-label="自动识别文字"></button></div>
+            <div class="switch-row"><span>隐私候选审阅</span><button class="switch" role="switch" aria-checked="true" aria-label="隐私候选审阅"></button></div>
+          </div>
+          <div class="tab-page" data-page="api">
+            <div class="field"><label for="endpoint">接口地址</label><input id="endpoint" value="https://example.invalid/v1"></div>
+            <div class="field"><label for="model">文本模型</label><input id="model" value="configured-model"></div>
+            <div class="switch-row"><span>保存接口凭据</span><button class="switch" role="switch" aria-checked="false" aria-label="保存接口凭据"></button></div>
+          </div>
+          <div class="tab-page" data-page="capture">
+            <div class="field"><label for="format">保存格式</label><input id="format" value="PNG"></div>
+            <div class="switch-row"><span>完成时复制</span><button class="switch" role="switch" aria-checked="true" aria-label="完成时复制"></button></div>
+            <div class="switch-row"><span>保留截图历史</span><button class="switch" role="switch" aria-checked="true" aria-label="保留截图历史"></button></div>
+          </div>
+        </section>
+
+        <section class="panel" aria-label="截图历史">
+          <div class="panel-head"><strong>截图历史</strong><code id="historyCount">3 项</code></div>
+          <div class="panel-body">
+            <div class="search"><input id="historySearch" aria-label="搜索截图历史" placeholder="搜索文字或日期"><button class="quiet" id="clearSearch">清除</button></div>
+            <div class="history-grid" id="historyGrid">
+              <article class="history-card favorite" data-search="2026-10-20 产品说明"><button class="favorite-btn" aria-label="取消收藏">★</button><strong>10:42 · 1280 × 720</strong><span>产品说明 / 本地识别</span></article>
+              <article class="history-card" data-search="2026-10-19 接口记录"><button class="favorite-btn" aria-label="收藏">☆</button><strong>18:09 · 960 × 540</strong><span>接口记录 / 翻译</span></article>
+              <article class="history-card" data-search="2026-10-18 标注示例"><button class="favorite-btn" aria-label="收藏">☆</button><strong>09:15 · 1440 × 900</strong><span>标注示例 / 拼图</span></article>
+              <div class="empty" hidden>没有匹配记录</div>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <pre class="sr-only" id="selftestOutput" aria-hidden="true"></pre>
+  <script>
+    (() => {
+      const output = document.getElementById("selftestOutput");
+      const toast = document.getElementById("toast");
+      const statusText = document.getElementById("statusText");
+      let toastTimer = 0;
+      let pass = 0;
+      let fail = 0;
+      function showToast(message) {
+        toast.textContent = message;
+        toast.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove("show"), 1400);
+      }
+      document.querySelectorAll(".tool").forEach((button) => {
+        button.addEventListener("click", () => {
+          const alreadyActive = button.classList.contains("active");
+          document.querySelectorAll(".tool").forEach((item) => item.classList.remove("active"));
+          if (!alreadyActive) button.classList.add("active");
+          statusText.textContent = alreadyActive ? "编辑就绪" : button.dataset.tool;
+          showToast(alreadyActive ? "已取消工具选择" : "已选择：" + button.dataset.tool);
+        });
+      });
+      document.querySelectorAll(".action").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.disabled) return;
+          statusText.textContent = button.dataset.action;
+          showToast("已执行：" + button.dataset.action);
+          if (button.id === "undoBtn") {
+            document.getElementById("redoBtn").disabled = false;
+            button.disabled = true;
+          } else if (button.id === "redoBtn") {
+            document.getElementById("undoBtn").disabled = false;
+            button.disabled = true;
+          }
+        });
+      });
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          document.querySelectorAll(".tab").forEach((item) => {
+            item.classList.toggle("active", item === tab);
+            item.setAttribute("aria-selected", String(item === tab));
+          });
+          document.querySelectorAll(".tab-page").forEach((page) => {
+            page.classList.toggle("active", page.dataset.page === tab.dataset.tab);
+          });
+        });
+      });
+      document.querySelectorAll(".switch").forEach((button) => {
+        button.addEventListener("click", () => {
+          button.setAttribute("aria-checked", String(button.getAttribute("aria-checked") !== "true"));
+        });
+      });
+      const search = document.getElementById("historySearch");
+      const grid = document.getElementById("historyGrid");
+      const cards = [...grid.querySelectorAll(".history-card")];
+      const empty = grid.querySelector(".empty");
+      function filterHistory() {
+        const query = search.value.trim().toLocaleLowerCase("zh-CN");
+        let shown = 0;
+        cards.forEach((card) => {
+          const match = !query || card.dataset.search.toLocaleLowerCase("zh-CN").includes(query);
+          card.hidden = !match;
+          if (match) shown++;
+        });
+        empty.hidden = shown !== 0;
+        document.getElementById("historyCount").textContent = shown + " 项";
+      }
+      search.addEventListener("input", filterHistory);
+      document.getElementById("clearSearch").addEventListener("click", () => {
+        search.value = "";
+        filterHistory();
+      });
+      grid.querySelectorAll(".favorite-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          const card = button.closest(".history-card");
+          const favorite = !card.classList.contains("favorite");
+          card.classList.toggle("favorite", favorite);
+          button.textContent = favorite ? "★" : "☆";
+          button.setAttribute("aria-label", favorite ? "取消收藏" : "收藏");
+        });
+      });
+      function assert(name, condition) {
+        if (condition) {
+          pass++;
+          output.textContent += "PASS " + name + "\n";
+        } else {
+          fail++;
+          output.textContent += "FAIL " + name + "\n";
+        }
+      }
+      if (new URLSearchParams(location.search).get("selftest") === "1") {
+        document.body.classList.add("testing");
+        assert("工具栏按钮数量", document.querySelectorAll(".console button").length === 19);
+        document.querySelectorAll(".tool").forEach((button) => {
+          button.click();
+          assert("工具点击：" + button.dataset.tool, button.classList.contains("active"));
+          button.click();
+          assert("工具取消：" + button.dataset.tool, !button.classList.contains("active"));
+        });
+        document.querySelectorAll(".tab").forEach((tab) => {
+          tab.click();
+          assert("页签切换：" + tab.textContent.trim(), tab.classList.contains("active"));
+        });
+        document.querySelectorAll(".switch").forEach((button) => {
+          const before = button.getAttribute("aria-checked");
+          button.click();
+          assert("开关切换", button.getAttribute("aria-checked") !== before);
+        });
+        search.value = "接口";
+        search.dispatchEvent(new Event("input"));
+        assert("历史搜索过滤", !cards[1].hidden && cards[0].hidden);
+        document.getElementById("clearSearch").click();
+        assert("历史搜索清除", cards.every((card) => !card.hidden));
+        const firstFavorite = grid.querySelector(".favorite-btn");
+        const wasFavorite = firstFavorite.closest(".history-card").classList.contains("favorite");
+        firstFavorite.click();
+        assert("收藏状态切换", firstFavorite.closest(".history-card").classList.contains("favorite") !== wasFavorite);
+        document.getElementById("undoBtn").disabled = false;
+        document.getElementById("undoBtn").click();
+        assert("撤销动作", document.getElementById("redoBtn").disabled === false);
+        document.getElementById("redoBtn").click();
+        assert("重做动作", document.getElementById("undoBtn").disabled === false);
+        document.querySelectorAll(".action:not(#undoBtn):not(#redoBtn)").forEach((button) => {
+          button.click();
+          assert("动作点击：" + button.dataset.action, statusText.textContent === button.dataset.action);
+        });
+        output.textContent += "VIEWPORT " + innerWidth + " " + document.documentElement.scrollWidth + "\n";
+        output.textContent += "SUMMARY " + pass + " PASS / " + fail + " FAIL\n";
+        document.body.dataset.selftest = fail ? "failed" : "passed";
+        document.body.classList.remove("testing");
+      }
+    })();
+  </script>
+</body>
+</html>

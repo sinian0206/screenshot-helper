@@ -39,6 +39,55 @@ namespace XiaoJie
         }
     }
 
+    /// <summary>AI 识别出的一行文字（坐标均为相对图片宽高的 0~1 小数）。</summary>
+    public class ImageTextBlock
+    {
+        public string Text = "";
+        public string Translation = "";
+        public float X;
+        public float Y;
+        public float W;
+        public float H;
+        public bool Sensitive;
+        internal bool HasLocalCoordinates;
+        public string Kind = "";   // name/phone/id/email/address/account/code/other
+
+        public bool HasRect
+        {
+            get
+            {
+                return !float.IsNaN(X) && !float.IsInfinity(X) &&
+                    !float.IsNaN(Y) && !float.IsInfinity(Y) &&
+                    !float.IsNaN(W) && !float.IsInfinity(W) &&
+                    !float.IsNaN(H) && !float.IsInfinity(H) &&
+                    W > (HasLocalCoordinates ? 0f : 0.002f) && H > (HasLocalCoordinates ? 0f : 0.002f);
+            }
+        }
+
+        public override string ToString()
+        {
+            return (Kind.Length > 0 ? Kind + ":" : "") + Text;
+        }
+    }
+
+    /// <summary>人脸/头像框（相对坐标 0~1）。</summary>
+    public class FaceBox
+    {
+        public float X;
+        public float Y;
+        public float W;
+        public float H;
+    }
+
+    /// <summary>隐私分析结果：文字行（含敏感标记）+ 人脸/头像框。</summary>
+    public class PrivacyAnalysis
+    {
+        public List<ImageTextBlock> Lines = new List<ImageTextBlock>();
+        public List<FaceBox> Faces = new List<FaceBox>();
+        internal bool HasLocalCoordinates;
+        internal string Warning = "";
+    }
+
     /// <summary>隐私区域（坐标均为相对图片宽高的 0~1 小数）。</summary>
     public class PrivacyRegion
     {
@@ -59,7 +108,7 @@ namespace XiaoJie
     /// 所有带 onDelta 的方法都会在后台线程回调增量文本，UI 层需自行 Invoke/BeginInvoke。
     /// 本类不做重试，调用方负责重试/取消。
     /// </summary>
-    public sealed class DeepSeekClient
+    public sealed partial class DeepSeekClient
     {
         private readonly AppConfig _cfg;
         private readonly object _sync = new object();
@@ -93,13 +142,20 @@ namespace XiaoJie
                 url = url.TrimEnd('/');
                 if (url.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)) return url;
                 if (url.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)) return url + "/chat/completions";
+                Uri baseUri;
+                if (Uri.TryCreate(url, UriKind.Absolute, out baseUri) && baseUri.AbsolutePath == "/")
+                {
+                    // 官方根地址可直接使用；第三方根地址保留原有 OpenAI 兼容路径。
+                    if (AppConfig.IsOfficialDeepSeekUrl(url)) return url + "/chat/completions";
+                    return url + "/v1/chat/completions";
+                }
                 return url + "/chat/completions";
             }
         }
 
         private bool IsDeepSeekEndpoint
         {
-            get { return (_cfg.BaseUrl ?? "").IndexOf("deepseek", StringComparison.OrdinalIgnoreCase) >= 0; }
+            get { return AppConfig.IsOfficialDeepSeekUrl(Endpoint); }
         }
 
         /// <summary>中止当前进行中的请求（用于取消/窗口关闭）。</summary>
@@ -134,39 +190,38 @@ namespace XiaoJie
             }, ct);
         }
 
-        /// <summary>文字提取（OCR）。返回完整识别文本；onDelta 为流式增量。</summary>
-        public Task<string> OcrAsync(Bitmap image, Action<string> onDelta, Action<AiUsage> onUsage, CancellationToken ct)
+        /// <summary>在本机识别文字，不发送图片，不需要 API Key。</summary>
+        public async Task<string> OcrAsync(Bitmap image, Action<string> onDelta, Action<AiUsage> onUsage, CancellationToken ct)
         {
-            return Task.Run(async () =>
+            LocalOcrResult res = await OcrResultAsync(image, onDelta, onUsage, ct).ConfigureAwait(false);
+            return res != null ? res.Text : "";
+        }
+
+        public async Task<LocalOcrResult> OcrResultAsync(Bitmap image, Action<string> onDelta, Action<AiUsage> onUsage, CancellationToken ct)
+        {
+            Stopwatch sw = Stopwatch.StartNew();
+            using (var engine = new LocalOcr())
             {
-                Stopwatch sw = Stopwatch.StartNew();
-                string system = string.IsNullOrEmpty(_cfg.OcrExtraPrompt)
-                    ? OcrSystemPrompt
-                    : OcrSystemPrompt + "\n补充要求：" + _cfg.OcrExtraPrompt;
-                string userText = "请提取这张截图中的全部文字。";
-                string dataUrl = ImageUtil.ToDataUrl(image);
-                string body = BuildRequestBody(_cfg.VisionModel, system, userText, dataUrl, true, false, 4096);
-                string text = await SendAsync(body, true, onDelta, onUsage, "original", ct).ConfigureAwait(false);
+                LocalOcrResult result = await engine.RecognizeAsync(image, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 sw.Stop();
-                if (text == null) text = "";
-                return text.Trim();
-            }, ct);
+                if (onDelta != null) onDelta(result.Text);
+                if (onUsage != null) onUsage(new AiUsage { ElapsedMs = (int)sw.ElapsedMilliseconds });
+                return result;
+            }
         }
 
         /// <summary>提取并翻译：先 OCR，再翻译为 targetLang。返回 [原文, 译文]。</summary>
-        public Task<string[]> TranslateImageAsync(Bitmap image, string targetLang,
+        public async Task<string[]> TranslateImageAsync(Bitmap image, string targetLang,
             Action<string> onOriginalDelta, Action<string> onTranslationDelta, Action<AiUsage> onUsage, CancellationToken ct)
         {
-            return Task.Run(async () =>
+            string original = await OcrAsync(image, onOriginalDelta, onUsage, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(original))
             {
-                string original = await OcrAsync(image, onOriginalDelta, onUsage, ct).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(original) || original.IndexOf("未识别到文字", StringComparison.Ordinal) >= 0)
-                {
-                    return new string[] { original ?? "", "(未识别到可翻译的文字)" };
-                }
-                string translation = await TranslateTextAsync(original, targetLang, onTranslationDelta, onUsage, ct).ConfigureAwait(false);
-                return new string[] { original, translation };
-            }, ct);
+                return new string[] { original ?? "", "(未识别到可翻译的文字)" };
+            }
+            string translation = await TranslateTextAsync(original, targetLang, onTranslationDelta, onUsage, ct).ConfigureAwait(false);
+            return new string[] { original, translation };
         }
 
         /// <summary>文本翻译（流式）。</summary>
@@ -197,6 +252,16 @@ namespace XiaoJie
             }, ct);
         }
 
+
+        private async Task<string> AnalyzeVisionJsonAsync(Bitmap image, string systemPrompt, string userText, int maxTokens, CancellationToken ct)
+        {
+            string dataUrl = ImageUtil.ToDataUrl(image);
+            string body = BuildRequestBody(_cfg.VisionModel, systemPrompt, userText, dataUrl, false, true, maxTokens);
+            string content = await SendAsync(body, false, null, null, "original", ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(content)) throw new AiException("AI 没有返回内容，请重试。");
+            return content;
+        }
+
         // ===================== Prompt =====================
 
         public const string OcrSystemPrompt =
@@ -223,6 +288,8 @@ namespace XiaoJie
         private string BuildRequestBody(string model, string systemPrompt, string userText, string imageDataUrl,
             bool stream, bool jsonMode, int maxTokens)
         {
+            if (!string.IsNullOrEmpty(imageDataUrl) && string.IsNullOrWhiteSpace(model))
+                throw new AiException("请在设置中填写支持图片输入的视觉模型，或关闭“检测头像与二维码”。");
             if (string.IsNullOrWhiteSpace(model)) model = "deepseek-flash";
             if (string.IsNullOrWhiteSpace(userText)) userText = "";
             StringBuilder sb = new StringBuilder(1024);
@@ -288,7 +355,7 @@ namespace XiaoJie
             Action<AiUsage> onUsage, string imageDetail, CancellationToken ct)
         {
             if (!HasApiKey)
-                throw new AiException("尚未配置 DeepSeek API Key。请点击托盘图标 →「设置…」填写 API Key 后再试。", 401);
+                throw new AiException("尚未配置 API Key。请点击托盘图标 →「设置…」填写 API Key 后再试。", 401);
 
             ct.ThrowIfCancellationRequested();
             string endpoint = Endpoint;
@@ -305,11 +372,17 @@ namespace XiaoJie
             req.Method = "POST";
             req.ContentType = "application/json; charset=utf-8";
             req.Accept = stream ? "text/event-stream" : "application/json";
-            req.UserAgent = "WeChatShot/" + AppInfo.Version + " (Windows NT)";
+            req.UserAgent = "ScreenshotHelper/" + AppInfo.Version;
+            try { req.Headers["Accept-Language"] = "zh-CN,zh;q=0.9,en;q=0.6"; } catch { }
             req.KeepAlive = true;
             req.Timeout = Math.Max(10, _cfg.TimeoutSec) * 1000;
             req.ReadWriteTimeout = Math.Max(10, _cfg.TimeoutSec) * 1000;
             req.Headers["Authorization"] = "Bearer " + (_cfg.ApiKey ?? "").Trim();
+
+            CancellationToken userToken = ct;
+            var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Math.Min(600, _cfg.TimeoutSec))));
+            ct = deadline.Token;
 
             lock (_sync) { _current = req; }
             CancellationTokenRegistration reg = ct.Register(delegate
@@ -420,6 +493,11 @@ namespace XiaoJie
                     }
                 }
             }
+            catch (Exception) when (deadline.IsCancellationRequested)
+            {
+                userToken.ThrowIfCancellationRequested();
+                throw new AiException("请求超时，已停止等待，请检查网络或调整超时设置。");
+            }
             catch (OperationCanceledException) { throw; }
             catch (AiException) { throw; }
             catch (WebException we)
@@ -435,6 +513,7 @@ namespace XiaoJie
             finally
             {
                 reg.Dispose();
+                deadline.Dispose();
                 lock (_sync) { if (ReferenceEquals(_current, req)) _current = null; }
             }
         }
@@ -579,11 +658,12 @@ namespace XiaoJie
             {
                 case 400: return "请求格式错误（400）" + suffix;
                 case 401: return "API Key 无效或未授权（401），请到「设置」中检查 API Key。" + suffix;
-                case 402: return "DeepSeek 账户余额不足（402），请先充值后再使用。" + suffix;
+                case 402: return "AI 账户余额不足（402），请先充值后再使用。" + suffix;
+                case 403: return "AI 网关拒绝了请求（403，可能被 Cloudflare/风控拦截）。请检查 Base URL、网络或稍后重试。" + suffix;
                 case 422: return "请求参数错误（422）" + suffix;
                 case 429: return "请求太频繁（429），请稍后再试。" + suffix;
-                case 500: return "DeepSeek 服务器故障（500），请稍后重试。" + suffix;
-                case 503: return "DeepSeek 服务器繁忙（503），请稍后重试。" + suffix;
+                case 500: return "接口服务故障（500），请稍后重试。" + suffix;
+                case 503: return "接口服务繁忙（503），请稍后重试。" + suffix;
                 default: return "请求失败（HTTP " + status + "）" + suffix;
             }
         }
@@ -605,6 +685,170 @@ namespace XiaoJie
         {
             if (string.IsNullOrEmpty(s)) return "";
             return s.Length <= max ? s : s.Substring(0, max) + "…";
+        }
+
+        private static Dictionary<string, object> ParseJsonRoot(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content)) throw new AiException("AI 返回内容为空，请重试。");
+            string json = StripCodeFence(content);
+            int first = json.IndexOf('{');
+            int last = json.LastIndexOf('}');
+            if (first < 0 || last <= first) throw new AiException("AI 返回的内容不是 JSON，请重试。");
+            json = json.Substring(first, last - first + 1);
+            try
+            {
+                JavaScriptSerializer ser = new JavaScriptSerializer();
+                ser.MaxJsonLength = 8 * 1024 * 1024;
+                Dictionary<string, object> root = ser.Deserialize<Dictionary<string, object>>(json);
+                if (root == null) throw new AiException("AI 返回的 JSON 为空，请重试。");
+                return root;
+            }
+            catch (AiException) { throw; }
+            catch (Exception ex)
+            {
+                throw new AiException("AI 返回的 JSON 解析失败，请重试。", 0, ex);
+            }
+        }
+
+        private static List<ImageTextBlock> ParseTextBlocks(string content, int imageW, int imageH)
+        {
+            return ParseTextBlocks(ParseJsonRoot(content), imageW, imageH);
+        }
+
+        private static List<ImageTextBlock> ParseTextBlocks(Dictionary<string, object> root, int imageW, int imageH)
+        {
+            List<ImageTextBlock> result = new List<ImageTextBlock>();
+            object listObj = null;
+            if (!root.TryGetValue("lines", out listObj)) root.TryGetValue("blocks", out listObj);
+            object[] arr = AsArray(listObj);
+            if (arr == null) return result;
+            foreach (object item in arr)
+            {
+                Dictionary<string, object> d = item as Dictionary<string, object>;
+                if (d == null) continue;
+                ImageTextBlock block = new ImageTextBlock();
+                block.Text = GetString(d, "text");
+                block.Translation = GetString(d, "translation");
+                block.Kind = GetString(d, "type");
+                if (string.IsNullOrEmpty(block.Kind)) block.Kind = GetString(d, "kind");
+                block.Sensitive = GetBool(d, "sensitive") || GetBool(d, "is_sensitive") || GetBool(d, "private");
+                block.X = GetFloat(d, "x");
+                block.Y = GetFloat(d, "y");
+                block.W = GetFloat(d, "w");
+                block.H = GetFloat(d, "h");
+                if (block.W <= 0f || block.H <= 0f)
+                {
+                    float x2 = GetFloat(d, "x2");
+                    float y2 = GetFloat(d, "y2");
+                    if (x2 > block.X && y2 > block.Y) { block.W = x2 - block.X; block.H = y2 - block.Y; }
+                }
+                NormalizeRect(ref block.X, ref block.Y, ref block.W, ref block.H, imageW, imageH);
+                if (!block.HasRect) continue;
+                if (string.IsNullOrEmpty(block.Text) && string.IsNullOrEmpty(block.Translation)) continue;
+                result.Add(block);
+            }
+            return result;
+        }
+
+        private static List<FaceBox> ParseFaces(Dictionary<string, object> root, int imageW, int imageH)
+        {
+            var result = new List<FaceBox>();
+            bool hasRegionArray = false;
+            foreach (string key in new[] { "faces", "avatars", "codes", "qr" })
+            {
+                object value;
+                if (!root.TryGetValue(key, out value)) continue;
+                object[] regions = AsArray(value);
+                if (regions == null) throw new AiException("视觉检测区域格式无效。");
+                hasRegionArray = true;
+                foreach (object item in regions)
+                {
+                    var region = item as Dictionary<string, object>;
+                    if (region == null) throw new AiException("视觉检测区域格式无效。");
+                    float x = GetRequiredCoordinate(region, "x"), y = GetRequiredCoordinate(region, "y");
+                    float w = GetRequiredCoordinate(region, "w"), h = GetRequiredCoordinate(region, "h");
+                    // 视觉补充只接受约定的归一化坐标，不猜百分比或像素比例。
+                    if (float.IsNaN(x) || float.IsNaN(y) || float.IsNaN(w) || float.IsNaN(h) ||
+                        float.IsInfinity(x) || float.IsInfinity(y) || float.IsInfinity(w) || float.IsInfinity(h) ||
+                        x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > 1.001f || y + h > 1.001f)
+                        throw new AiException("视觉检测坐标超出图片范围。");
+                    result.Add(new FaceBox { X = x, Y = y, W = Math.Min(w, 1f - x), H = Math.Min(h, 1f - y) });
+                }
+            }
+            if (!hasRegionArray) throw new AiException("视觉检测响应缺少区域数组。");
+            return result;
+        }
+
+        private static float GetRequiredCoordinate(Dictionary<string, object> region, string key)
+        {
+            object value;
+            if (!region.TryGetValue(key, out value) ||
+                !(value is int || value is long || value is double || value is float || value is decimal))
+                throw new AiException("视觉检测坐标字段缺失或类型无效。");
+            try { return Convert.ToSingle(value); }
+            catch (OverflowException) { throw new AiException("视觉检测坐标超出支持范围。"); }
+        }
+
+        /// <summary>
+        /// 模型有时返回 0~1、0~100、0~1000 或像素坐标。这里尝试多种比例，选几何上最合理的一种。
+        /// </summary>
+        private static void NormalizeRect(ref float x, ref float y, ref float w, ref float h, int imageW, int imageH)
+        {
+            if (imageW <= 0) imageW = 1;
+            if (imageH <= 0) imageH = 1;
+            float rawX = x, rawY = y, rawW = w, rawH = h;
+            float bestScore = float.MinValue;
+            float bx = 0, by = 0, bw = 0, bh = 0;
+            // 候选缩放：0~1、0~100、0~1000、像素
+            float[] sx = new float[] { 1f, 100f, 1000f, imageW };
+            float[] sy = new float[] { 1f, 100f, 1000f, imageH };
+            for (int i = 0; i < sx.Length; i++)
+            {
+                float cx = rawX / sx[i];
+                float cy = rawY / sy[i];
+                float cw = rawW / sx[i];
+                float ch = rawH / sy[i];
+                if (cw <= 0.0025f || ch <= 0.0025f || cw > 0.995f || ch > 0.995f) continue;
+                if (cx < -0.02f || cy < -0.02f || cx + cw > 1.04f || cy + ch > 1.04f) continue;
+                cx = Clamp01(cx); cy = Clamp01(cy); cw = Clamp01(cw); ch = Clamp01(ch);
+                if (cx + cw > 1f) cw = 1f - cx;
+                if (cy + ch > 1f) ch = 1f - cy;
+                // 偏好：接近 0~1 的候选（模型被明确要求 0~1），其余缩放需具有较整的数值特征
+                float score = 10f - i;
+                // 若数值本身带小数，倾向于它是归一化/百分比，而非像素
+                bool hasFraction = Math.Abs(rawX - (float)Math.Round(rawX)) > 0.0001f || Math.Abs(rawW - (float)Math.Round(rawW)) > 0.0001f;
+                if (i == 3 && hasFraction) score -= 3f;
+                if (i == 1 && !hasFraction && rawW >= 2f) score -= 0.5f;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bx = cx; by = cy; bw = cw; bh = ch;
+                }
+            }
+            if (bestScore == float.MinValue)
+            {
+                // 全都不可行：按当前归一化值夹取（保底）
+                bx = Clamp01(rawX); by = Clamp01(rawY); bw = Clamp01(rawW); bh = Clamp01(rawH);
+                if (bx + bw > 1f) bw = Math.Max(0f, 1f - bx);
+                if (by + bh > 1f) bh = Math.Max(0f, 1f - by);
+            }
+            x = bx; y = by; w = bw; h = bh;
+        }
+
+        private static string GetString(Dictionary<string, object> d, string key)
+        {
+            object v;
+            if (!d.TryGetValue(key, out v) || v == null) return "";
+            return v.ToString();
+        }
+
+        private static bool GetBool(Dictionary<string, object> d, string key)
+        {
+            object v;
+            if (!d.TryGetValue(key, out v) || v == null) return false;
+            if (v is bool) return (bool)v;
+            string text = v.ToString().Trim().ToLowerInvariant();
+            return text == "true" || text == "1" || text == "yes" || text == "是";
         }
 
         private static List<PrivacyRegion> ParsePrivacyRegions(string content)

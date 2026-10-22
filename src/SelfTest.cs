@@ -12,14 +12,17 @@ using System.Windows.Forms;
 namespace XiaoJie
 {
     /// <summary>
-    /// 内置自检（开发/QA 用）。运行：微信截图助手.exe --selftest [--out 报告文件] [--mock-api 端口]
+    /// 内置自检（开发/QA 用）。运行：截图助手.exe --selftest [--out 报告文件] [--mock-api 端口]
     /// 输出纯文本报告到文件（WinExe 无控制台），退出码 0 = 全部通过。
     /// 负责队友：Lead + QA。
     /// </summary>
     internal static class SelfTest
     {
+        private static readonly HashSet<IntPtr> LeftButtonTargets = new HashSet<IntPtr>();
+
         public static int Run(string[] args)
         {
+            LeftButtonTargets.Clear();
             StringBuilder report = new StringBuilder();
             int failures = 0;
             string outPath = Program.GetArgValue(args, "--out", "");
@@ -38,7 +41,7 @@ namespace XiaoJie
 
             try
             {
-                report.AppendLine("微信截图助手自检 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                report.AppendLine("截图助手自检 " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
                 report.AppendLine("版本: " + AppInfo.Version);
                 report.AppendLine("虚拟屏幕: " + DpiUtil.VirtualScreen);
                 report.AppendLine("系统缩放: " + DpiUtil.SystemScale);
@@ -128,6 +131,12 @@ namespace XiaoJie
                     RunAutostartTest(check);
                 }
 
+                // ===== 真实 AI 测试（仅 --test-ai 时，使用当前配置里的真实 API）=====
+                if (Program.HasArg(args, "--test-ai"))
+                {
+                    RunAiRealTests(report, Path.GetDirectoryName(outPath), check, cfg);
+                }
+
                 // ===== 离屏 UI 测试（不干扰用户桌面）=====
                 RunUiTests(report, Path.GetDirectoryName(outPath), check, mockUrl);
 
@@ -160,8 +169,7 @@ namespace XiaoJie
                 // 1) 工具栏图标一览（直接渲染，便于人工检查）
                 try
                 {
-                    Rectangle[] bounds = new Rectangle[17];
-                    using (Bitmap sheet = new Bitmap(17 * 58 + 20, 110))
+                    using (Bitmap sheet = new Bitmap(20 * 58 + 20, 110))
                     {
                         using (Graphics g = Graphics.FromImage(sheet))
                         {
@@ -169,7 +177,6 @@ namespace XiaoJie
                             g.SmoothingMode = SmoothingMode.AntiAlias;
                             EditorToolbar toolbar = new EditorToolbar(1f);
                             toolbar.BringToFront();
-                            for (int i = 0; i < 17; i++) bounds[i] = toolbar.NonSeparatorBounds(i);
                             // 用 EditorToolbar 自己的绘制逻辑生成整条工具栏
                             using (Bitmap tb = new Bitmap(toolbar.Width, toolbar.Height))
                             {
@@ -204,7 +211,7 @@ namespace XiaoJie
                         PenAnnotation pen = new PenAnnotation { Color = Color.FromArgb(255, 152, 0), LineWidth = 5 };
                         for (int i = 0; i < 12; i++) pen.Points.Add(new PointF(80 + i * 22, 330 + (float)Math.Sin(i * 0.6) * 40));
                         list.Add(pen);
-                        list.Add(new MosaicAnnotation { Mask = MosaicAnnotation.BuildRectMask(new RectangleF(620, 300, 180, 90)) });
+                        list.Add(new MosaicAnnotation { Mask = MosaicAnnotation.BuildRectMask(new RectangleF(90, 150, 430, 130)) });
                         list.Add(new TextAnnotation { Text = "测试文字 Hello 123", Location = new PointF(80, 430), Color = Color.FromArgb(51, 51, 51), FontPx = 26 });
                         list.Add(new NumberAnnotation { Number = 1, Center = new PointF(480, 450), Color = UiTheme.Red, Radius = 15 });
                         list.Add(new NumberAnnotation { Number = 2, Center = new PointF(530, 450), Color = UiTheme.Red, Radius = 15 });
@@ -257,11 +264,13 @@ namespace XiaoJie
                     Pump();
 
                     EditorToolbar toolbar = FindToolbar(overlay);
+                    report.AppendLine("[INFO] 编辑器框选后状态: " + DescribeEditor(overlay, toolbar));
                     check("离屏框选建立", toolbar != null && toolbar.Visible, toolbar == null ? "未找到工具栏" : "选区已建立");
                     if (toolbar != null)
                     {
-                        Rectangle rectBtn = toolbar.NonSeparatorBounds(0);
+                        Rectangle rectBtn = toolbar.ToolBounds(EditorTool.Rectangle);
                         ClickControl(toolbar, rectBtn);
+                        report.AppendLine("[INFO] 首次矩形工具点击后状态: " + DescribeEditor(overlay, toolbar));
                         PostMouse(overlay.Handle, 0x0201, 300, 300);
                         Pump();
                         for (int i = 1; i <= 6; i++)
@@ -271,6 +280,7 @@ namespace XiaoJie
                         }
                         PostMouse(overlay.Handle, 0x0202, 600, 480);
                         Pump();
+                        report.AppendLine("[INFO] 首次绘制后状态: " + DescribeEditor(overlay, toolbar));
 
                         using (Bitmap snap = new Bitmap(overlay.Width, overlay.Height))
                         {
@@ -281,16 +291,18 @@ namespace XiaoJie
                         }
 
                         // 撤销：点撤销按钮后标注应消失
-                        ClickControl(toolbar, toolbar.NonSeparatorBounds(11)); // 撤销
+                        ClickControl(toolbar, toolbar.ActionBounds(ToolbarAction.Undo));
                         using (Bitmap undone = new Bitmap(overlay.Width, overlay.Height))
                         {
                             overlay.DrawToBitmap(undone, new Rectangle(0, 0, overlay.Width, overlay.Height));
                             undone.Save(Path.Combine(uiDir, "editor_after_undo.png"), ImageFormat.Png);
-                            check("撤销功能", !HasWarmColor(undone, new Rectangle(100, 100, 600, 400)), "撤销后选区内部不应有红色标注");
+                            // 新控制台手柄本身使用橙色；检查内部内容区，避免把选区控制件误判为标注。
+                            check("撤销功能", !HasWarmColor(undone, new Rectangle(130, 130, 540, 340)), "撤销后选区内容区不应有红色标注");
                         }
 
                         // 文字工具：点击文字工具 → 点击画布 → 文本框出现 → 输入 → Enter 提交
-                        ClickControl(toolbar, toolbar.NonSeparatorBounds(6)); // 文字
+                        ClickControl(toolbar, toolbar.ToolBounds(EditorTool.Text));
+                        report.AppendLine("[INFO] 文字工具点击后状态: " + DescribeEditor(overlay, toolbar));
                         PostMouse(overlay.Handle, 0x0201, 640, 420);
                         Pump(2);
                         PostMouse(overlay.Handle, 0x0202, 640, 420);
@@ -308,7 +320,8 @@ namespace XiaoJie
                         check("文字工具交互", textOk, textOk ? "输入并提交成功" : "未找到文本框或提交失败");
 
                         // 重新画一个矩形，确保最终保存的图片包含标注
-                        ClickControl(toolbar, toolbar.NonSeparatorBounds(0));
+                        ClickControl(toolbar, toolbar.ToolBounds(EditorTool.Rectangle));
+                        report.AppendLine("[INFO] 最终矩形工具点击后状态: " + DescribeEditor(overlay, toolbar));
                         PostMouse(overlay.Handle, 0x0201, 320, 300);
                         Pump();
                         for (int i = 1; i <= 5; i++)
@@ -318,13 +331,14 @@ namespace XiaoJie
                         }
                         PostMouse(overlay.Handle, 0x0202, 580, 460);
                         Pump();
+                        report.AppendLine("[INFO] 最终绘制后状态: " + DescribeEditor(overlay, toolbar));
 
-                        Rectangle saveBtn = toolbar.NonSeparatorBounds(12);
+                        Rectangle saveBtn = toolbar.ActionBounds(ToolbarAction.Save);
                         ClickControl(toolbar, saveBtn);
                         Pump(6);
                     }
 
-                    string[] saved = Directory.GetFiles(cfg.SaveDir, "微信截图_*.png");
+                    string[] saved = Directory.GetFiles(cfg.SaveDir, "截图_*.png");
                     check("保存流程", saved.Length > 0, saved.Length > 0 ? saved[0] : "没有生成文件");
                     if (saved.Length > 0)
                     {
@@ -364,7 +378,7 @@ namespace XiaoJie
                             EditorToolbar aiToolbar = FindToolbar(aiOverlay);
                             if (aiToolbar != null)
                             {
-                                ClickControl(aiToolbar, aiToolbar.NonSeparatorBounds(9)); // OCR
+                                ClickControl(aiToolbar, aiToolbar.ActionBounds(ToolbarAction.Ocr));
                                 string panelText = "";
                                 bool panelFound = false;
                                 for (int i = 0; i < 100; i++)
@@ -418,6 +432,19 @@ namespace XiaoJie
             }
         }
 
+        private static string DescribeEditor(OverlayForm overlay, EditorToolbar toolbar)
+        {
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            Type type = typeof(OverlayForm);
+            object tool = type.GetField("_tool", flags).GetValue(overlay);
+            object selection = type.GetField("_selection", flags).GetValue(overlay);
+            object busy = type.GetField("_busy", flags).GetValue(overlay);
+            System.Collections.ICollection annotations = (System.Collections.ICollection)type.GetField("_annotations", flags).GetValue(overlay);
+            return "tool=" + tool + "，toolbar=" + (toolbar == null ? "null" : toolbar.ActiveTool.ToString()) +
+                "，selection=" + selection + "，busy=" + busy + "，annotations=" + annotations.Count +
+                "，toolbarDisposed=" + (toolbar == null || toolbar.IsDisposed);
+        }
+
         private static EditorToolbar FindToolbar(OverlayForm overlay)
         {
             foreach (Control control in overlay.Controls)
@@ -440,7 +467,11 @@ namespace XiaoJie
         private static void PostMouse(IntPtr hwnd, int message, int x, int y)
         {
             int lParam = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
-            Native.PostMessage(hwnd, (uint)message, IntPtr.Zero, new IntPtr(lParam));
+            if (message == 0x0201) LeftButtonTargets.Add(hwnd);
+            if (message == 0x0202) LeftButtonTargets.Remove(hwnd);
+            // 拖动消息携带真实鼠标的 MK_LBUTTON 状态，不能把按住左键报告为悬停。
+            int keyState = LeftButtonTargets.Contains(hwnd) ? 1 : 0;
+            Native.PostMessage(hwnd, (uint)message, new IntPtr(keyState), new IntPtr(lParam));
         }
 
         private static void ClickControl(Control control, Rectangle localBounds)
@@ -491,13 +522,13 @@ namespace XiaoJie
                     g.DrawRectangle(border, 60, 60, width - 120, height - 160);
                 using (Font title = new Font(UiTheme.UiFontName, 28, FontStyle.Bold, GraphicsUnit.Pixel))
                 using (SolidBrush dark = new SolidBrush(Color.FromArgb(45, 45, 55)))
-                    g.DrawString("微信截图助手 · 离屏渲染测试", title, dark, 100, 100);
+                    g.DrawString("截图助手 · 离屏渲染测试", title, dark, 100, 100);
                 using (Font body = new Font(UiTheme.UiFontName, 18, FontStyle.Regular, GraphicsUnit.Pixel))
                 using (SolidBrush gray = new SolidBrush(Color.FromArgb(90, 100, 110)))
                 {
                     g.DrawString("用于验证标注、工具栏与保存流程，不会显示在真实桌面上。", body, gray, 100, 160);
                     g.DrawString("第二行测试文字：ABCDEFG 1234567890", body, gray, 100, 195);
-                    g.DrawString("第三行测试文字：微信截图 / DeepSeek / OCR / 翻译", body, gray, 100, 230);
+                    g.DrawString("第三行测试文字：截图 / API / OCR / 翻译", body, gray, 100, 230);
                 }
                 Random random = new Random(42);
                 int areaW = Math.Max(40, width - 140);
@@ -591,6 +622,8 @@ namespace XiaoJie
             {
                 TextBox box = control as TextBox;
                 if (box != null) return box;
+                TextBox nested = FindTextBox(control);
+                if (nested != null) return nested;
             }
             return null;
         }
@@ -663,7 +696,7 @@ namespace XiaoJie
                     {
                         if (key != null)
                         {
-                            object v = key.GetValue("XiaoJieWeChatShot");
+                            object v = key.GetValue("ScreenshotHelper") ?? key.GetValue("XiaoJieWeChatShot");
                             if (v != null) value = v.ToString();
                         }
                     }
@@ -671,7 +704,7 @@ namespace XiaoJie
                 catch { }
                 Autostart.SetEnabled(false);
                 bool disabled = Autostart.IsEnabled();
-                bool ok = enabled && !disabled && value.IndexOf("微信截图助手.exe", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool ok = enabled && !disabled && value.IndexOf("截图助手.exe", StringComparison.OrdinalIgnoreCase) >= 0;
                 check("开机自启注册表开关", ok,
                     "开启=" + enabled + "，关闭=" + disabled + "，Run 值=" + value);
             }
@@ -683,6 +716,179 @@ namespace XiaoJie
             {
                 try { Autostart.SetEnabled(original); } catch { }
             }
+        }
+
+        // ============================ 真实 AI 集成测试 ============================
+
+        private static void RunAiRealTests(StringBuilder report, string reportDir, Action<string, bool, string> check, AppConfig cfg)
+        {
+            report.AppendLine();
+            report.AppendLine("真实 AI 测试（BaseUrl=" + cfg.BaseUrl + "，模型=" + cfg.VisionModel + "）");
+            string aiDir = Path.Combine(reportDir, "ai");
+            Directory.CreateDirectory(aiDir);
+            Bitmap image = BuildAiSampleImage();
+            DeepSeekClient client = new DeepSeekClient(cfg);
+            try
+            {
+                using (CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(180)))
+                {
+                    // 1) 真实 OCR（流式）
+                    StringBuilder deltas = new StringBuilder();
+                    string ocr = RunSync(client.OcrAsync(image, delegate (string piece) { deltas.Append(piece); }, null, cts.Token));
+                    bool ocrOk = !string.IsNullOrEmpty(ocr) && deltas.Length > 0 && ocr.Contains("会议");
+                    check("真实 AI 文字提取", ocrOk, "结果=" + Shorten(ocr) + "，流式增量=" + deltas.Length);
+                    if (ocrOk) File.WriteAllText(Path.Combine(aiDir, "ocr.txt"), ocr, new UTF8Encoding(false));
+
+                    // 2) 真实原位翻译
+                    List<ImageTextBlock> blocks = RunSync(client.TranslateInPlaceAsync(image, cfg.TranslateTarget, cts.Token));
+                    int translated = 0;
+                    foreach (ImageTextBlock block in blocks)
+                    {
+                        if (block.HasRect && !string.IsNullOrEmpty(block.Translation) &&
+                            NormalizeForCompare(block.Text) != NormalizeForCompare(block.Translation)) translated++;
+                    }
+                    bool translateOk = blocks.Count >= 3 && translated >= 2;
+                    check("真实 AI 原位翻译", translateOk,
+                        "行数=" + blocks.Count + "，实际变化=" + translated + "，目标语言=" + cfg.TranslateTarget +
+                        "，示例=" + (blocks.Count > 0 ? Shorten(blocks[0].Text) + " => " + Shorten(blocks[0].Translation) : ""));
+                    report.AppendLine("  [AI] 图片尺寸=" + image.Width + "x" + image.Height + "，前 3 个 block 坐标：");
+                    for (int i = 0; i < Math.Min(3, blocks.Count); i++)
+                    {
+                        ImageTextBlock b = blocks[i];
+                        report.AppendLine("    #" + i + " text=" + Shorten(b.Text) + " rect=(" +
+                            (b.X * image.Width).ToString("0") + "," + (b.Y * image.Height).ToString("0") + "," +
+                            (b.W * image.Width).ToString("0") + "," + (b.H * image.Height).ToString("0") + ")");
+                    }
+                    if (blocks.Count > 0)
+                    {
+                        using (Bitmap canvas = (Bitmap)image.Clone())
+                        {
+                            TranslationOverlayAnnotation overlay = new TranslationOverlayAnnotation();
+                            List<TextLineDetector.TextLine> detectedLines = TextLineDetector.Detect(image, new Rectangle(0, 0, image.Width, image.Height));
+                            RectangleF[] mappedLines = TextLineDetector.MapBlocks(detectedLines, blocks, new Rectangle(0, 0, image.Width, image.Height));
+                            for (int bi = 0; bi < blocks.Count; bi++)
+                            {
+                                ImageTextBlock block = blocks[bi];
+                                if (NormalizeForCompare(block.Text) == NormalizeForCompare(block.Translation)) continue;
+                                RectangleF rect;
+                                if (bi < mappedLines.Length && mappedLines[bi] != RectangleF.Empty) rect = mappedLines[bi];
+                                else if (block.HasRect)
+                                {
+                                    rect = new RectangleF(block.X * image.Width, block.Y * image.Height,
+                                        Math.Max(1f, block.W * image.Width), Math.Max(1f, block.H * image.Height));
+                                    rect = PrivacyDetector.InkRect.Refine(image, rect, new Rectangle(0, 0, image.Width, image.Height), 0.8f);
+                                }
+                                else continue;
+                                rect.Inflate(2f, 1f);
+                                overlay.Blocks.Add(new TranslationBlock
+                                {
+                                    Rect = rect, Original = block.Text, Translation = block.Translation,
+                                    Background = Color.White, Foreground = Color.FromArgb(20, 20, 20),
+                                    FontPx = Math.Max(9f, Math.Min(36f, rect.Height * 0.82f))
+                                });
+                            }
+                            using (Graphics g = Graphics.FromImage(canvas)) overlay.Draw(g, null);
+                            string path = Path.Combine(aiDir, "translate_inplace.png");
+                            canvas.Save(path, ImageFormat.Png);
+                            check("原位翻译渲染图", translated > 0, path);
+                        }
+                    }
+
+                    // 3) 真实隐私分析（行 + 人脸框）
+                    PrivacyAnalysis analysis = RunSync(client.AnalyzePrivacyAsync(image, cts.Token));
+                    int lineCount, faceCount;
+                    List<RectangleF> rects = PrivacyDetector.BuildMaskRects(image, analysis, new Rectangle(0, 0, image.Width, image.Height), 0.18f, out lineCount, out faceCount);
+                    bool privacyOk = lineCount >= 2;
+                    check("真实 AI 隐私检测", privacyOk,
+                        "文字命中=" + lineCount + "，人脸=" + faceCount + "，行数=" + (analysis.Lines == null ? 0 : analysis.Lines.Count));
+                    report.AppendLine("  [AI] 隐私行=" + (analysis.Lines == null ? 0 : analysis.Lines.Count) +
+                        "，人脸=" + (analysis.Faces == null ? 0 : analysis.Faces.Count) + "，打码矩形=" + rects.Count);
+                    for (int fi = 0; analysis.Faces != null && fi < analysis.Faces.Count; fi++)
+                    {
+                        FaceBox fb = analysis.Faces[fi];
+                        report.AppendLine("    face rect=(" + (fb.X * image.Width).ToString("0") + "," + (fb.Y * image.Height).ToString("0") +
+                            "," + (fb.W * image.Width).ToString("0") + "x" + (fb.H * image.Height).ToString("0") + ")");
+                    }
+                    image.Save(Path.Combine(aiDir, "ai_sample.png"), ImageFormat.Png);
+                    if (analysis.Faces != null && analysis.Faces.Count > 0)
+                    {
+                        using (Bitmap canvas = (Bitmap)image.Clone())
+                        using (MosaicCanvas mosaic = new MosaicCanvas(image, Math.Max(22, (int)cfg.MosaicBlock)))
+                        using (Graphics g = Graphics.FromImage(canvas))
+                        {
+                            FaceBox fb = analysis.Faces[0];
+                            RectangleF fr = new RectangleF(fb.X * image.Width, fb.Y * image.Height, fb.W * image.Width, fb.H * image.Height);
+                            using (GraphicsPath p2 = new GraphicsPath())
+                            {
+                                p2.AddRectangle(fr);
+                                new MosaicAnnotation { Mask = p2 }.Draw(g, mosaic);
+                            }
+                            canvas.Save(Path.Combine(aiDir, "privacy_face_only.png"), ImageFormat.Png);
+                        }
+                    }
+                    if (rects.Count > 0)
+                    {
+                        using (Bitmap canvas = (Bitmap)image.Clone())
+                        using (MosaicCanvas mosaic = new MosaicCanvas(image, Math.Max(22, (int)cfg.MosaicBlock)))
+                        using (Graphics g = Graphics.FromImage(canvas))
+                        {
+                            MosaicAnnotation annotation = new MosaicAnnotation { Rects = new List<RectangleF>(rects) };
+                            annotation.Draw(g, mosaic);
+                            string png = Path.Combine(aiDir, "privacy_masked.png");
+                            canvas.Save(png, ImageFormat.Png);
+                            check("智能打码渲染图", true, png);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                check("真实 AI 测试", false, ex.Message + "\n" + ex.StackTrace);
+            }
+            finally
+            {
+                image.Dispose();
+            }
+        }
+
+        private static string NormalizeForCompare(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c)) continue;
+                if (".,，。:：;；!！?？\"'“”‘’".IndexOf(c) >= 0) continue;
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            return sb.ToString();
+        }
+
+        private static Bitmap BuildAiSampleImage()
+        {
+            Bitmap bmp = new Bitmap(960, 540, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.Clear(Color.FromArgb(248, 249, 251));
+                using (SolidBrush card = new SolidBrush(Color.White)) g.FillRectangle(card, 30, 30, 900, 480);
+                using (Pen border = new Pen(Color.FromArgb(225, 228, 233))) g.DrawRectangle(border, 30, 30, 900, 480);
+                using (SolidBrush avatar = new SolidBrush(Color.FromArgb(90, 160, 220))) g.FillEllipse(avatar, 60, 60, 80, 80);
+                using (Font title = new Font(UiTheme.UiFontName, 26, FontStyle.Bold, GraphicsUnit.Pixel))
+                using (SolidBrush dark = new SolidBrush(Color.FromArgb(32, 32, 36)))
+                    g.DrawString("张伟  产品经理", title, dark, 165, 66);
+                using (Font body = new Font(UiTheme.UiFontName, 20, FontStyle.Regular, GraphicsUnit.Pixel))
+                using (SolidBrush gray = new SolidBrush(Color.FromArgb(60, 64, 70)))
+                {
+                    g.DrawString("会议通知：明天下午 3 点在三楼会议室开会", body, gray, 60, 170);
+                    g.DrawString("联系人：张伟  手机：13812345678", body, gray, 60, 215);
+                    g.DrawString("身份证号：110101199003071234", body, gray, 60, 260);
+                    g.DrawString("地址：北京市朝阳区建国路 88 号 SOHO 现代城 A 座 1203", body, gray, 60, 305);
+                    g.DrawString("邮箱：zhangwei@example.com", body, gray, 60, 350);
+                    g.DrawString("English: Hello OCR, this is a sample screenshot.", body, gray, 60, 405);
+                }
+            }
+            return bmp;
         }
     }
 }

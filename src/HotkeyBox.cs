@@ -361,19 +361,19 @@ namespace XiaoJie
                 if (_recordingHint.Length > 0)
                 {
                     text = _recordingHint;
-                    color = UiTheme.Red;
+                    color = UiTheme.ActionRed;
                 }
                 else
                 {
                     string prefix = CurrentModifierPrefix();
                     text = prefix.Length > 0 ? prefix + "…" : "请按下组合键，Esc 取消";
-                    color = UiTheme.GreenDark;
+                    color = UiTheme.ActionGreen;
                 }
             }
             else if (string.IsNullOrEmpty(_hotkeyText))
             {
                 text = "点击后按下组合键";
-                color = Color.FromArgb(150, 150, 150);
+                color = UiTheme.TextMuted;
             }
             else
             {
