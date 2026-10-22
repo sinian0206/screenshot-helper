@@ -16,7 +16,7 @@ namespace XiaoJie
     public static class AppInfo
     {
         public const string Name = "截图助手";
-        public const string Version = "1.2.3";
+        public const string Version = "1.2.4";
         public const string FullName = "截图助手";
         public const string HiddenWindowTitle = "XiaoJie_WeChatShot_Hidden_v1";
         public const int WM_APP_TRIGGER_CAPTURE = 0x8001;   // 第二个实例请求截图

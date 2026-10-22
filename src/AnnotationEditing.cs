@@ -36,18 +36,6 @@ namespace XiaoJie
                         Translation = block.Translation, Background = block.Background, Foreground = block.Foreground, FontPx = block.FontPx });
                 return copy;
             }
-            LoupeAnnotation loupe = item as LoupeAnnotation;
-            if (loupe != null)
-            {
-                return new LoupeAnnotation
-                {
-                    SourceRect = loupe.SourceRect,
-                    DisplayRect = loupe.DisplayRect,
-                    Zoom = loupe.Zoom,
-                    BorderColor = loupe.BorderColor,
-                    BorderWidth = loupe.BorderWidth
-                };
-            }
             throw new ArgumentException("Unsupported annotation.", "item");
         }
 

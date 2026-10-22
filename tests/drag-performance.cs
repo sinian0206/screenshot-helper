@@ -439,6 +439,7 @@ internal static class DragPerformanceTests
             graphics.DrawLine(pen, left, top, right, bottom);
             graphics.DrawLine(pen, right, top, left, bottom);
         }
+        Call(form, "DrawResizeGrip", graphics);
     }
 
     private static bool Equal(Bitmap first, Bitmap second)

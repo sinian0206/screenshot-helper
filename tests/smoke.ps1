@@ -175,8 +175,8 @@ try {
     $expectedProduct = '截图助手'
     Add-Check "ProductName 精确为「$expectedProduct」" ([string]::Equals($vi.ProductName, $expectedProduct, [System.StringComparison]::Ordinal)) ("ProductName: " + $vi.ProductName)
     Add-Check 'ProductName 不含旧名称' (-not ([string]$vi.ProductName).Contains('微信')) ("ProductName: " + $vi.ProductName)
-    Add-Check 'FileVersion 为 1.2.3.x' ($vi.FileVersion -like '1.2.3.*') ("FileVersion: " + $vi.FileVersion)
-    Add-Check 'ProductVersion 为 1.2.3' ($vi.ProductVersion -like '1.2.3*') ("ProductVersion: " + $vi.ProductVersion)
+    Add-Check 'FileVersion 为 1.2.4.x' ($vi.FileVersion -like '1.2.4.*') ("FileVersion: " + $vi.FileVersion)
+    Add-Check 'ProductVersion 为 1.2.4' ($vi.ProductVersion -like '1.2.4*') ("ProductVersion: " + $vi.ProductVersion)
 }
 catch {
     Add-Check '读取文件版本信息' $false $_.Exception.Message

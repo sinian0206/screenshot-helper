@@ -8,10 +8,11 @@
 
 - 支持区域框选和窗口识别。
 - 显示选区尺寸与鼠标位置颜色值。
-- 提供矩形、椭圆、箭头、画笔、文字、序号、表情、马赛克和局部放大标注。
+- 提供矩形、椭圆、箭头、画笔、文字、文字选择、序号、表情和马赛克标注。
 - 支持对象选择、移动、缩放、删除、撤销和重做。
 - 支持 PNG、JPG 和剪贴板输出。
-- 支持钉图、拖动、缩放和置顶。
+- 支持钉图、拖动、右下角拖拽缩放、滚轮缩放、比例菜单和置顶。
+- 支持在截图区域内框选文字并复制识别结果。
 
 ### 本地识别与文本处理
 
@@ -112,6 +113,7 @@ pwsh -NoProfile -File tests\run-all.ps1 -ContinueOnFailure
 - [验证报告](VERIFICATION.md)
 - [使用说明](docs/使用说明.md)
 - [功能清单](docs/功能清单.md)
+- [产品建议](docs/产品建议.md)
 
 ## License
 
@@ -125,10 +127,11 @@ Screenshot Helper is a Windows desktop application for screenshot capture, annot
 
 - Region and window capture.
 - Coordinates, dimensions, and color value display.
-- Rectangle, ellipse, arrow, freehand, text, numbering, emoji, redaction, and loupe annotations.
+- Rectangle, ellipse, arrow, freehand, text, text selection, numbering, emoji, and redaction annotations.
 - Object editing, undo, and redo.
 - PNG, JPG, and clipboard output.
-- Pin-to-desktop operation.
+- Pin-to-desktop operation with drag resizing, wheel scaling, and scale presets.
+- OCR-based selection of text inside a screenshot region and clipboard copying.
 - Offline OCR with long-image tiling and pixel coordinates.
 - Line-preserving, paragraph, whitespace-cleaned, and table-oriented text output.
 - In-place translation.

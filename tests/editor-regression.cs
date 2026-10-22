@@ -24,6 +24,7 @@ internal static class EditorRegression {
         Run("小钉图关闭按钮完整可见", TestSmallPinClose);
         Run("钉图关闭按钮不覆盖图像内容", TestPinContent);
         Run("钉图缩放后关闭按钮仍在屏幕内", TestPinZoom);
+        Run("钉图右下角缩放手柄可见", TestPinResizeGrip);
         Run("钉图拖动结束释放鼠标且离开重置悬停", TestPinPointerState);
         Run("框选松开前绘制实时边框", TestLiveSelection);
         Run("文字编辑透明预览且可以拖动", TestTextMovement);
@@ -161,6 +162,17 @@ internal static class EditorRegression {
             Require(form.ClientRectangle.Contains(close), "放大后关闭按钮超出客户区");
             close.Offset(form.Location);
             Require(workArea.Contains(close), "缩放后的关闭按钮移出屏幕");
+        }
+    }
+
+    private static void TestPinResizeGrip() {
+        using (PinForm form = new PinForm(Solid(120, 80, Color.Cyan), new Rectangle(80, 80, 120, 80), false)) {
+            Rectangle grip = (Rectangle)Call(form, "ResizeGripRect");
+            Require(form.ClientRectangle.Contains(grip), "缩放手柄超出钉图窗口");
+            Size before = ((Rectangle)Call(form, "ImageBounds")).Size;
+            Call(form, "SetZoom", 1.5f, new Point(form.Left + before.Width / 2, form.Top + before.Height / 2));
+            Size after = ((Rectangle)Call(form, "ImageBounds")).Size;
+            Require(after.Width > before.Width && after.Height > before.Height, "缩放比例菜单未改变图像尺寸");
         }
     }
 

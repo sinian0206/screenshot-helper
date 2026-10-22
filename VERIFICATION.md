@@ -1,16 +1,16 @@
-# 截图助手 1.2.3 验证报告
+# 截图助手 1.2.4 验证报告
 
-日期：2026-10-20。环境：Windows、已有 Visual Studio/MSBuild、.NET Framework 4.8、x64 录制桥接组件和 `C:\Dev` 本地 OCR 运行时。
+日期：2026-10-22。环境：Windows、Visual Studio/MSBuild、.NET Framework 4.8、x64 录制桥接组件和 `C:\Dev` 本地 OCR 运行时。
 
 ## 交付产物
 
 | 文件 | 大小 | SHA256 |
 | --- | ---: | --- |
-| `截图助手.exe` | 492,544 B | `7AFFECA7C7711F5FB3D4892A87444909540948DFEEDDBB96EF2D93172CA3F0AC` |
-| `RecorderNative.dll` | 320,512 B | `8C022900051C1F27837F843771A0EBA3DDCE3E5CE39A9CC038001D2789A8E61F` |
-| `截图助手_v1.2.3_绿色版.zip` | 20.86 MiB | `3360EA1A6629A300CE33C09F4073E8EA3A6D4A11B17177022C4F84C52D63762C` |
+| `截图助手.exe` | 493,568 B | `9ED33E2AAA6423795EB7AB21A8E1D8BCE72DA8FBFBD65D1F9BEF1ADEDE4EF60F` |
+| `RecorderNative.dll` | 320,512 B | `74DEA0100E8AFB35393665381B92ADF13C32FE462B697E1CDF63E8DD07BCCC39` |
+| `截图助手_v1.2.4_绿色版.zip` | 20.87 MiB | `24F563DC8A1A6F2E7E1DF84E9C135B0C3650CF5F1DDE2615C41317EA9166640D` |
 
-压缩包包含主程序、录制桥接 DLL、OCR 运行时、许可证、三份说明书和配置示例。压缩包与发布目录不包含用户 `config.json`、历史记录或实际凭据。
+压缩包包含主程序、录制桥接 DLL、OCR 运行时、许可证、说明文档和配置示例；不包含用户配置、历史记录或凭据。
 
 ## 完整回归
 
@@ -18,29 +18,29 @@
 
 ```powershell
 pwsh -NoProfile -File tests/run-all.ps1 `
-  -RunName v1_2_3_final4 `
+  -RunName v1_2_4_final2 `
   -ContinueOnFailure
 ```
 
 结果：24 个阶段全部退出码 0。汇总文件：
 
-`build_acceptance/v1_2_3_final4/logs/summary.json`
+`build_acceptance/v1_2_4_final2/logs/summary.json`
 
 | 阶段 | 结果 |
 | --- | --- |
-| 本地 OCR、图标与合法短字 | 真实本地运行时 10 项通过；图标与短字通过 |
+| 本地 OCR、图标与合法短字 | 真实本地运行时通过 |
 | 默认配置、设置菜单 | 通过 |
 | 录制准备与拖动性能 | 10 项通过；性能阶段通过 |
 | OCR 管线、隐私速度 | 通过 |
-| 编辑器、对象编辑 | 通过 |
+| 编辑器、对象编辑 | 通过；包含钉图缩放手柄和原图像素保护 |
 | 工作流与设置布局 | 通过 |
 | 对比度 | 13 个场景、234 个实际文字色对、0 FAIL |
 | 长截图与多屏布局 | 通过 |
 | 录制核心、刷新、媒体解码 | 通过 |
 | 可移动录制与 UI 集成 | 通过 |
-| UI 控件矩阵 | 45 PASS / 0 FAIL |
+| UI 控件矩阵 | 45 PASS / 0 FAIL，包含“选择文字”工具 |
 | UI 展示器 | 41 PASS / 0 FAIL |
-| 七项功能专项 | 27 PASS / 0 FAIL |
+| 功能专项 | 22 PASS / 0 FAIL，包含历史、拼图、隐私和翻译 |
 | 冒烟测试 | 18/18 PASS |
 
 ## UI 交互
@@ -51,37 +51,21 @@ pwsh -NoProfile -File tests/run-all.ps1 `
 - 窄屏：390×844，`scrollWidth=390`。
 - 覆盖工具栏点击与取消、页签切换、开关切换、历史搜索、搜索清除、收藏、撤销、重做、保存、关闭和完成动作。
 
-`tests/ui-controls-regression.ps1` 直接实例化生产控件，覆盖：
+`tests/ui-controls-regression.ps1` 直接实例化生产控件，覆盖工具栏点击、取消、右键、禁用态、100%/150%/200% 渲染、设置页签和开关。
 
-- 10 个绘图和选择工具的点击、取消与右键事件。
-- 9 个动作按钮的事件与最近动作状态。
-- 撤销、重做禁用态。
-- 100%、150%、200% 工具栏布局与离屏渲染。
-- 设置页签和开关点击。
+## 新增与移除
+
+- 钉图增加右下角拖拽缩放、滚轮缩放和比例菜单；导出仍使用原始图片像素。
+- 增加“选择文字”工具，拖动截图内范围后使用本地 OCR 识别并复制结果。
+- 移除局部放大标注的工具入口、绘制实现和编辑副本支持。
+- 界面统一为浅色浮层、细边框、清晰文本层级和单一蓝色动作色。
 
 ## 自检与打包
 
 - `截图助手.exe --selftest`：19 项通过，结果为“全部通过”。
 - 冒烟测试：从零构建、组件检查、版本/清单、自检和残留进程检查共 18/18 通过。
 - 独立解压验收：图标、工作流、对象编辑、UI 集成、可移动录制和主程序自检全部通过。
-- 解压验收保留 5 个阶段日志和 `summary.json`。
-
-证据目录：
-
-- `build_acceptance/v1_2_3_final4/logs`
-- `build_acceptance/package_v1_2_3_final4`
-- `build_ui/showcase/cdp-report.json`
-- `build_ui/controls/report.txt`
-- `build_ui/seven-features/report.txt`
-
-## 本轮修复
-
-1. 日志中的 `Unsupported annotation` 来自局部放大标注未进入对象几何复制分支。现已支持复制、恢复和回归测试。
-2. `LocalOcr` 使用注入运行时路径时，可用性检查错误地只读取默认路径。现按实例路径检查，并在不可用时调用系统离线识别。
-3. 强调色悬停态未达到 4.5:1 对比度。设置页主色改为较深蓝，悬停态同步调整，应用自绘文字色对全部通过。
-4. 选区尺寸标签的圆角边缘会混合底层背景。测试改为比较标签内侧实色区域，标签本身使用固定不透明近白背景。
-5. 翻译契约从旧“溢出后弹出结果面板”改为“原位对象保存完整译文并自适应排版”，集成测试已同步。
-6. 历史记录增加 OCR 文本保存、收藏排序和按文件大小修剪的回归。
+- 独立解压验收目录：`build_acceptance/package_v1_2_4_final2`。
 
 ## 范围与限制
 

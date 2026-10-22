@@ -17,8 +17,10 @@ namespace XiaoJie
         private readonly bool _topMost;
         private float _zoom = 1f;
         private bool _dragging;
+        private bool _resizing;
         private Point _dragStartScreen;
         private Point _startLocation;
+        private float _resizeStartZoom;
         private ContextMenuStrip _menu;
         private bool _closeHover;
         private float _scale;
@@ -89,6 +91,15 @@ namespace XiaoJie
             ToolStripMenuItem reset = new ToolStripMenuItem("恢复 100% 大小");
             reset.Click += delegate { SetZoomFromCenter(1f); };
             _menu.Items.Add(reset);
+            ToolStripMenuItem scaleMenu = new ToolStripMenuItem("缩放比例");
+            foreach (int percent in new[] { 50, 75, 100, 125, 150, 200 })
+            {
+                int selected = percent;
+                ToolStripMenuItem item = new ToolStripMenuItem(selected + "%");
+                item.Click += delegate { SetZoomFromCenter(selected / 100f); };
+                scaleMenu.DropDownItems.Add(item);
+            }
+            _menu.Items.Add(scaleMenu);
             _menu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem close = new ToolStripMenuItem("关闭");
             close.Click += delegate { Close(); };
@@ -155,6 +166,27 @@ namespace XiaoJie
                 g.DrawLine(pen, px, py, ex, ey);
                 g.DrawLine(pen, ex, py, px, ey);
             }
+            DrawResizeGrip(g);
+        }
+
+        private Rectangle ResizeGripRect()
+        {
+            int size = Math.Max(14, (int)Math.Round(18 * _scale));
+            return new Rectangle(ClientSize.Width - size - BorderWidth, ClientSize.Height - size - BorderWidth, size, size);
+        }
+
+        private void DrawResizeGrip(Graphics graphics)
+        {
+            Rectangle grip = ResizeGripRect();
+            using (Pen pen = new Pen(Color.FromArgb(220, 255, 255, 255), Math.Max(1f, _scale)))
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    int inset = (int)Math.Round((i + 1) * 4 * _scale);
+                    graphics.DrawLine(pen, grip.Right - inset, grip.Bottom - 2,
+                        grip.Right - 2, grip.Bottom - inset);
+                }
+            }
         }
 
         private Rectangle CloseButtonRect()
@@ -166,11 +198,12 @@ namespace XiaoJie
 
         private int BorderWidth { get { return Math.Max(2, (int)Math.Round(2 * _scale)); } }
         private int HeaderHeight { get { return Math.Max(28, (int)Math.Round(30 * _scale)); } }
+        private int GripFooterHeight { get { return Math.Max(18, (int)Math.Round(20 * _scale)); } }
 
         private Size SizeForZoom(float zoom)
         {
             return new Size(Math.Max((int)Math.Round(120 * _scale), (int)Math.Round(_image.Width * zoom)) + BorderWidth * 2,
-                Math.Max(1, (int)Math.Round(_image.Height * zoom)) + HeaderHeight + BorderWidth * 2);
+                Math.Max(1, (int)Math.Round(_image.Height * zoom)) + HeaderHeight + GripFooterHeight + BorderWidth * 2);
         }
 
         private Rectangle ImageBounds()
@@ -241,6 +274,15 @@ namespace XiaoJie
                 Close();
                 return;
             }
+            if (e.Button == MouseButtons.Left && ResizeGripRect().Contains(e.Location))
+            {
+                _resizing = true;
+                Capture = true;
+                _dragStartScreen = Cursor.Position;
+                _resizeStartZoom = _zoom;
+                Activate();
+                return;
+            }
             if (e.Button == MouseButtons.Left)
             {
                 _dragging = true;
@@ -258,6 +300,19 @@ namespace XiaoJie
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (_resizing)
+            {
+                Point resizeNow = Cursor.Position;
+                int dx = resizeNow.X - _dragStartScreen.X;
+                int dy = resizeNow.Y - _dragStartScreen.Y;
+                Rectangle image = ImageBounds();
+                float widthZoom = (_image.Width <= 0) ? _resizeStartZoom : (image.Width + dx) / (float)_image.Width;
+                float heightZoom = (_image.Height <= 0) ? _resizeStartZoom : (image.Height + dy) / (float)_image.Height;
+                float zoom = Math.Max(0.1f, Math.Min(4f, Math.Max(widthZoom, heightZoom)));
+                SetZoom(zoom, new Point(Left + image.Left, Top + image.Top));
+                Cursor = Cursors.SizeNWSE;
+                return;
+            }
             bool hover = CloseButtonRect().Contains(e.Location);
             if (hover != _closeHover)
             {
@@ -265,6 +320,7 @@ namespace XiaoJie
                 Cursor = hover ? Cursors.Hand : Cursors.Default;
                 Invalidate(CloseButtonRect());
             }
+            if (ResizeGripRect().Contains(e.Location)) Cursor = Cursors.SizeNWSE;
             if (!_dragging) return;
             Point now = Cursor.Position;
             Location = new Point(_startLocation.X + now.X - _dragStartScreen.X, _startLocation.Y + now.Y - _dragStartScreen.Y);
@@ -274,6 +330,7 @@ namespace XiaoJie
         {
             base.OnMouseUp(e);
             _dragging = false;
+            _resizing = false;
             Capture = false;
         }
 
@@ -281,6 +338,7 @@ namespace XiaoJie
         {
             base.OnMouseCaptureChanged(e);
             if (!Capture) _dragging = false;
+            if (!Capture) _resizing = false;
         }
 
         protected override void OnMouseLeave(EventArgs e)

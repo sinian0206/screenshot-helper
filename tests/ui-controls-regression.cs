@@ -44,8 +44,8 @@ public static class UiControlsRegression
             EditorTool[] tools =
             {
                 EditorTool.Rectangle, EditorTool.Ellipse, EditorTool.Emoji, EditorTool.Arrow,
-                EditorTool.Pen, EditorTool.Mosaic, EditorTool.Text, EditorTool.Number,
-                EditorTool.Loupe, EditorTool.Select
+                EditorTool.Pen, EditorTool.Mosaic, EditorTool.Text, EditorTool.TextSelect,
+                EditorTool.Number, EditorTool.Select
             };
             foreach (EditorTool tool in tools)
             {

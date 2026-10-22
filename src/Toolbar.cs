@@ -16,8 +16,8 @@ namespace XiaoJie
         Pen,
         Mosaic,
         Text,
+        TextSelect,
         Number,
-        Loupe,
         Select = 10
     }
 
@@ -35,7 +35,7 @@ namespace XiaoJie
         Redo
     }
 
-    /// <summary>截图编辑器的信号控制台工具栏，使用独立分组和 GDI+ 矢量图标。</summary>
+    /// <summary>截图编辑器工具栏，使用独立分组和 GDI+ 矢量图标。</summary>
     public sealed class EditorToolbar : Control
     {
         private sealed class Item
@@ -116,8 +116,8 @@ namespace XiaoJie
             AddTool(EditorTool.Pen, "画笔  (P)");
             AddTool(EditorTool.Mosaic, "马赛克  (M)");
             AddTool(EditorTool.Text, "文字  (T)");
+            AddTool(EditorTool.TextSelect, "选择文字  (C) · 框选后复制");
             AddTool(EditorTool.Number, "序号  (N)");
-            AddTool(EditorTool.Loupe, "放大镜  (L) · 局部放大标注");
             AddTool(EditorTool.Select, "选择对象  (V) · 拖动/缩放 · Delete 删除");
             _items.Add(new Item { IsSeparator = true });
             AddAction(ToolbarAction.Translate, "文字翻译  (点击后 AI 翻译)");
@@ -308,7 +308,7 @@ namespace XiaoJie
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-            // 苹果式浮层：柔和白底、轻描边和克制的高光。
+            // 浅色浮层：使用细描边、圆角和低强度阴影，保持工具按钮清晰可辨。
             RectangleF rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
             using (GraphicsPath path = ImageUtil.RoundedRect(rect, 16 * _scale))
             {
@@ -418,15 +418,6 @@ namespace XiaoJie
                     }
                     switch (tool)
                     {
-                        case EditorTool.Loupe:
-                            g.DrawEllipse(pen, X(3), Y(3), 10.5f * s, 10.5f * s);
-                            g.DrawLine(pen, P(10.8f, 10.8f), P(16.5f, 16.5f));
-                            using (Pen pCross = new Pen(pen.Color, 1.1f))
-                            {
-                                g.DrawLine(pCross, P(6.5f, 8.25f), P(10.0f, 8.25f));
-                                g.DrawLine(pCross, P(8.25f, 6.5f), P(8.25f, 10.0f));
-                            }
-                            return;
                         case EditorTool.Select:
                             g.DrawPolygon(pen, new[] { P(5, 3), P(5, 16), P(9, 12), P(13, 17), P(15, 16), P(11, 11), P(16, 10) });
                             return;
@@ -456,6 +447,12 @@ namespace XiaoJie
                         case EditorTool.Text:
                             g.DrawLine(pen, P(4.0f, 6.0f), P(16.0f, 6.0f));
                             g.DrawLine(pen, P(10.0f, 6.0f), P(10.0f, 16.0f));
+                            return;
+                        case EditorTool.TextSelect:
+                            g.DrawRectangle(pen, X(3), Y(4), 14 * s, 12 * s);
+                            g.DrawLine(pen, P(6, 8), P(14, 8));
+                            g.DrawLine(pen, P(6, 11), P(13, 11));
+                            g.DrawLine(pen, P(6, 14), P(11, 14));
                             return;
                         case EditorTool.Number:
                             g.DrawEllipse(pen, X(3.0f), Y(3.0f), 14 * s, 14 * s);

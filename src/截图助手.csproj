@@ -18,9 +18,9 @@
     <Description>截图助手：截图标注、本地文字识别、原位翻译、智能打码与屏幕录制，绿色免安装</Description>
     <Company>XiaoJie</Company>
     <Copyright>Copyright © 2026 XiaoJie</Copyright>
-    <Version>1.2.3</Version>
-    <FileVersion>1.2.3.0</FileVersion>
-    <AssemblyVersion>1.2.3.0</AssemblyVersion>
+    <Version>1.2.4</Version>
+    <FileVersion>1.2.4.0</FileVersion>
+    <AssemblyVersion>1.2.4.0</AssemblyVersion>
     <DebugType>none</DebugType>
     <Optimize>true</Optimize>
     <Deterministic>true</Deterministic>

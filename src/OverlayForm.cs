@@ -24,7 +24,8 @@ namespace XiaoJie
             Resizing,
             Shape,
             Freehand,
-            Object
+            Object,
+            TextSelecting
         }
 
         private readonly AppConfig _cfg;
@@ -77,6 +78,9 @@ namespace XiaoJie
         private Point _mousePos;
         private bool _mouseInside;
         private string _lastHex = "";
+        private Rectangle _textSelection;
+        private bool _textSelectionActive;
+        private CancellationTokenSource _textCopyCts;
         private Rectangle _hoverWindowRect = Rectangle.Empty;
         private string _hoverWindowTitle = "";
         private Rectangle _candidateWindow = Rectangle.Empty;
@@ -235,6 +239,7 @@ namespace XiaoJie
             DrawUnmaskedSelection(g, _selection);
             DrawAnnotations(g, _selection);
             DrawTextPreview(g);
+            DrawTextSelection(g);
             DrawSelectionChrome(g);
             DrawObjectSelection(g);
             if (_cfg.ShowDimensions) DrawSizeLabel(g, _selection, false);
@@ -253,6 +258,83 @@ namespace XiaoJie
                 using (SolidBrush brush = new SolidBrush(UiTheme.BadgeBackground)) graphics.FillRectangle(brush, box);
                 TextRenderer.DrawText(graphics, _privacyStatus, font, Rectangle.Inflate(box, -8, -5),
                     Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
+        }
+
+        private void DrawTextSelection(Graphics graphics)
+        {
+            if (!_hasSelection || _tool != EditorTool.TextSelect || _textSelection.Width < 2 || _textSelection.Height < 2)
+                return;
+            Rectangle rect = _textSelection;
+            using (SolidBrush brush = new SolidBrush(Color.FromArgb(48, UiTheme.Signal.R, UiTheme.Signal.G, UiTheme.Signal.B)))
+                graphics.FillRectangle(brush, rect);
+            using (Pen pen = new Pen(UiTheme.Signal, Math.Max(1f, _scale)))
+            {
+                pen.DashStyle = DashStyle.Dash;
+                graphics.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
+            }
+        }
+
+        private void BeginTextSelection(Point point)
+        {
+            if (!_hasSelection) return;
+            _dragStart = ClampToSelection(point);
+            _textSelection = new Rectangle(_dragStart, Size.Empty);
+            _textSelectionActive = false;
+            _drag = DragMode.TextSelecting;
+            Capture = true;
+            Cursor = Cursors.Cross;
+            Invalidate();
+        }
+
+        private Point ClampToSelection(Point point)
+        {
+            return new Point(
+                Math.Max(_selection.Left, Math.Min(_selection.Right, point.X)),
+                Math.Max(_selection.Top, Math.Min(_selection.Bottom, point.Y)));
+        }
+
+        private Rectangle ClampTextSelection(Rectangle rect)
+        {
+            rect.Intersect(_selection);
+            return rect;
+        }
+
+        private async void CopySelectedTextAsync(Rectangle rect)
+        {
+            if (rect.Width < 5 || rect.Height < 5 || _closing) return;
+            if (_textCopyCts != null) { _textCopyCts.Cancel(); _textCopyCts.Dispose(); }
+            CancellationTokenSource cts = new CancellationTokenSource();
+            _textCopyCts = cts;
+            Bitmap image = null;
+            try
+            {
+                image = ImageUtil.CloneRegion(_screenshot, rect);
+                using (LocalOcr ocr = new LocalOcr())
+                {
+                    Toast.Show("正在识别选中文字…", 1800);
+                    LocalOcrResult result = await ocr.RecognizeAsync(image, cts.Token).ConfigureAwait(true);
+                    if (cts.IsCancellationRequested || _closing || IsDisposed) return;
+                    string text = result == null ? "" : result.Text.Trim();
+                    if (text.Length == 0)
+                    {
+                        Toast.Show("未识别到文字，请扩大选区后重试", 2600);
+                        return;
+                    }
+                    if (ClipUtil.CopyText(text)) Toast.Show("已复制选中文字");
+                    else Toast.Show("复制失败，请重试", 2600);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Log.Write("选择文字识别失败: " + ex);
+                Toast.Show("文字识别失败：" + ex.Message, 3200);
+            }
+            finally
+            {
+                if (image != null) image.Dispose();
+                if (ReferenceEquals(_textCopyCts, cts)) { _textCopyCts.Dispose(); _textCopyCts = null; }
             }
         }
 
@@ -502,6 +584,11 @@ namespace XiaoJie
             }
             if (e.Button != MouseButtons.Left) return;
             if (_busy) return;
+            if (_hasSelection && _tool == EditorTool.TextSelect)
+            {
+                BeginTextSelection(e.Location);
+                return;
+            }
             CancelPrivacy(false);
             if (_translationBar != null) { CommitTranslationEdit(); return; }
             if (_textBar != null)
@@ -605,6 +692,10 @@ namespace XiaoJie
                     AppendFreePoint(e.Location);
                     Invalidate();
                     return;
+                case DragMode.TextSelecting:
+                    _textSelection = ClampTextSelection(NormalizeRect(_dragStart, e.Location));
+                    Invalidate();
+                    return;
             }
             bool repaint = false;
             if (!_hasSelection)
@@ -674,6 +765,14 @@ namespace XiaoJie
                     return;
                 case DragMode.Freehand:
                     CommitGhost();
+                    return;
+                case DragMode.TextSelecting:
+                    _drag = DragMode.None;
+                    Capture = false;
+                    _textSelection = ClampTextSelection(NormalizeRect(_dragStart, e.Location));
+                    _textSelectionActive = _textSelection.Width >= 5 && _textSelection.Height >= 5;
+                    Invalidate();
+                    if (_textSelectionActive) CopySelectedTextAsync(_textSelection);
                     return;
             }
         }
@@ -1209,21 +1308,14 @@ namespace XiaoJie
                 case EditorTool.Text:
                     BeginTextEdit(p);
                     break;
+                case EditorTool.TextSelect:
+                    BeginTextSelection(p);
+                    break;
                 case EditorTool.Emoji:
                     if (_pendingEmoji != null) PlaceEmoji(_pendingEmoji, p);
                     break;
                 case EditorTool.Number:
                     PlaceNumber(p);
-                    break;
-                case EditorTool.Loupe:
-                    _ghost = new LoupeAnnotation
-                    {
-                        SourceRect = new RectangleF(p.X, p.Y, 0, 0),
-                        DisplayRect = new RectangleF(p.X, p.Y, 0, 0),
-                        BorderColor = _color,
-                        BorderWidth = _lineWidth
-                    };
-                    _drag = DragMode.Shape;
                     break;
             }
         }
@@ -1235,20 +1327,6 @@ namespace XiaoJie
             {
                 Rectangle r = NormalizeRect(_dragStart, p);
                 shape.Rect = r;
-                return;
-            }
-            LoupeAnnotation loupe = _ghost as LoupeAnnotation;
-            if (loupe != null)
-            {
-                Rectangle r = NormalizeRect(_dragStart, p);
-                loupe.SourceRect = r;
-                float dw = Math.Max(60f, r.Width * loupe.Zoom);
-                float dh = Math.Max(40f, r.Height * loupe.Zoom);
-                float dx = r.Right + 30f;
-                float dy = r.Bottom + 20f;
-                if (dx + dw > _selection.Right) dx = r.Left - dw - 30f;
-                if (dy + dh > _selection.Bottom) dy = r.Top - dh - 20f;
-                loupe.DisplayRect = new RectangleF(dx, dy, dw, dh);
                 return;
             }
             ArrowAnnotation arrow = _ghost as ArrowAnnotation;
@@ -1562,9 +1640,14 @@ namespace XiaoJie
                     case Keys.P: SetTool(EditorTool.Pen); return true;
                     case Keys.M: SetTool(EditorTool.Mosaic); return true;
                     case Keys.T: SetTool(EditorTool.Text); return true;
+                    case Keys.C:
+                        if (_tool == EditorTool.TextSelect && _textSelectionActive)
+                        {
+                            CopySelectedTextAsync(_textSelection);
+                            return true;
+                        }
+                        SetTool(EditorTool.TextSelect); return true;
                     case Keys.N: SetTool(EditorTool.Number); return true;
-                    case Keys.L: SetTool(EditorTool.Loupe); return true;
-                    case Keys.C: CopyColorHex(); return true;
                     case Keys.Left:
                     case Keys.Right:
                     case Keys.Up:
@@ -2369,6 +2452,7 @@ namespace XiaoJie
                 CancelPrivacy(false);
                 _closing = true;
                 if (_aiCts != null) { _aiCts.Cancel(); _aiCts.Dispose(); _aiCts = null; }
+                if (_textCopyCts != null) { _textCopyCts.Cancel(); _textCopyCts.Dispose(); _textCopyCts = null; }
                 if (_client != null) _client.CancelAll();
                 RemoveTextBar();
                 RemoveTranslationBar();
@@ -2393,6 +2477,7 @@ namespace XiaoJie
                 ReleaseEditHistory();
                 RemoveTranslationBar();
                 if (_aiCts != null) { _aiCts.Cancel(); _aiCts.Dispose(); _aiCts = null; }
+                if (_textCopyCts != null) { _textCopyCts.Cancel(); _textCopyCts.Dispose(); _textCopyCts = null; }
                 if (_mosaic != null) { _mosaic.Dispose(); _mosaic = null; }
                 if (_ghost != null) { AnnotationGeometry.ReleaseCopy(_ghost); _ghost = null; _mosaicMask = null; }
                 if (_mosaicMask != null) { _mosaicMask.Dispose(); _mosaicMask = null; }

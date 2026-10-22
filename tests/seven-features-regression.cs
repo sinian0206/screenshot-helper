@@ -47,8 +47,6 @@ public static class SevenFeaturesRegression
         TestOcrTextFormatter();
         TestImageComposer();
         TestHistoryManager();
-        TestLoupeAnnotation();
-        TestLoupeEditing();
         TestNativeInterops();
         TestAdaptiveTranslationLayout();
 
@@ -188,42 +186,6 @@ public static class SevenFeaturesRegression
             "数量: " + quotaItems.Count + "，总大小: " + totalBytes);
         HistoryManager.ClearAll(store);
     }
-
-    private static void TestLoupeAnnotation()
-    {
-        Console.WriteLine("\n[5] 验证局部放大镜标注 (LoupeAnnotation)...");
-        using (Bitmap canvas = new Bitmap(400, 400))
-        {
-            using (Graphics g = Graphics.FromImage(canvas))
-            {
-                g.Clear(Color.White);
-                using (Font font = new Font("Arial", 16f))
-                {
-                    g.DrawString("TEST-LOUPE-TEXT", font, Brushes.Black, new PointF(100, 100));
-                }
-            }
-
-            using (MosaicCanvas mc = new MosaicCanvas(canvas, 12))
-            {
-                LoupeAnnotation loupe = new LoupeAnnotation();
-                loupe.SourceRect = new RectangleF(100, 100, 80, 50);
-                loupe.DisplayRect = new RectangleF(200, 150, 160, 100);
-                loupe.BorderColor = Color.FromArgb(7, 193, 96);
-                loupe.BorderWidth = 3f;
-
-                Assert("放大镜源与目标区域设定", loupe.SourceRect.Width == 80 && loupe.DisplayRect.Width == 160);
-
-                using (Graphics g = Graphics.FromImage(canvas))
-                {
-                    loupe.Draw(g, mc);
-                }
-
-                RectangleF bounds = loupe.GetBounds();
-                Assert("放大镜包围盒计算", bounds.Width >= 160 && bounds.Height >= 100);
-            }
-        }
-    }
-
     private static void TestNativeInterops()
     {
         Console.WriteLine("\n[7] 验证 RecorderNative.dll (Native OCR & Audio Meter)...");
@@ -246,37 +208,6 @@ public static class SevenFeaturesRegression
             Assert("原生互操作异常捕获", false, ex.Message);
         }
     }
-
-    private static void TestLoupeEditing()
-    {
-        Console.WriteLine("\n[6] 验证放大镜编辑与撤销...");
-        LoupeAnnotation source = new LoupeAnnotation
-        {
-            SourceRect = new RectangleF(20, 30, 80, 40),
-            DisplayRect = new RectangleF(160, 100, 160, 80),
-            Zoom = 2.5f,
-            BorderColor = Color.DarkOrange,
-            BorderWidth = 3f
-        };
-
-        Annotation copy = AnnotationGeometry.Copy(source);
-        try
-        {
-            LoupeAnnotation cloned = copy as LoupeAnnotation;
-            Assert("放大镜可建立编辑副本", cloned != null);
-            if (cloned == null) return;
-
-            cloned.DisplayRect = new RectangleF(180, 120, 200, 100);
-            AnnotationGeometry.Restore(source, copy);
-            Assert("放大镜编辑可恢复原位置", source.DisplayRect == new RectangleF(160, 100, 160, 80));
-            Assert("放大镜副本未共享源字段", cloned.SourceRect == source.SourceRect && cloned.Zoom == source.Zoom);
-        }
-        finally
-        {
-            AnnotationGeometry.ReleaseCopy(copy);
-        }
-    }
-
     private static void TestAdaptiveTranslationLayout()
     {
         Console.WriteLine("\n[8] 验证 1:1 原位翻译自适应排版...");

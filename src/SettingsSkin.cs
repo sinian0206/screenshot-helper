@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace XiaoJie
 {
-    /// <summary>设置窗口的信号控制台配色。</summary>
+    /// <summary>设置窗口的浅色控件配色。</summary>
     internal static class SettingsColors
     {
         public static readonly Color PageBg = Color.FromArgb(245, 245, 247);
